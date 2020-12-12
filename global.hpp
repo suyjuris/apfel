@@ -278,7 +278,7 @@ Array_t<T> array_subarray(Array_t<T> arr, s64 start, s64 end) {
 }
 template <typename T>
 Array_t<T> array_subarray(Array_t<T> arr, s64 start) {
-    return array_subarray(arr, start, arr.size-1);
+    return array_subarray(arr, start, arr.size);
 }
 
 template <typename... Args>

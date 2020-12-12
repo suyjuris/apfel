@@ -183,9 +183,11 @@ Array_t<u64> sat_expand_recursive(Sat_instance* inst, Array_t<u64> lits, Array_d
     inst->expand_temp.size = 0;
     sat_expand(inst, lits, &inst->expand_temp);
     array_reverse(inst->expand_temp);
-    
-    for (s64 i = inst->expand_temp.size-1; i >= 0; --i) {
-        u64 lit = inst->expand_temp[i];
+
+    while (inst->expand_temp.size) {
+        u64 lit = inst->expand_temp.back();
+        --inst->expand_temp.size;
+        
         u64 type;
         sat_decompose(lit, &type);
         if (type == Sat::VAR) {
@@ -400,6 +402,8 @@ void sat_add(Sat_instance* inst, u64 op, Array_t<u64> args) {
     
     s64 prev = inst->rewrite_temp.size;
     defer { inst->rewrite_temp.size = prev; };
+    
+    s64 prev_context = inst->context_literals.size;
 
     array_push_back(&inst->constraint_data, op);
     array_append(&inst->constraint_data, args);
@@ -415,10 +419,13 @@ void sat_add(Sat_instance* inst, u64 op, Array_t<u64> args) {
 
     s64 func_index = ((subtype - Sat::CONSTRAINT) >> 56) - 1;
     (*inst->rewrite_funcs[func_index])(inst, op, args_copy);
+
+    assert(inst->context_literals.size == prev_context);
 }
 
 void sat_push(Sat_instance* inst, Array_t<u64> condition) {
     array_append(&inst->context_literals, condition);
+    assert(inst->context_literals.size != 4);
     array_push_back(&inst->context_offsets, inst->context_literals.size);
 }
 void sat_push_amend(Sat_instance* inst, u64 condition_lit) {
@@ -456,6 +463,7 @@ void sat_init(Sat_instance* inst) {
     sat_add(inst, Sat::clause, {Sat::var_true});
 
     inst->rewrite_temp = array_create_unreserved<u64>(128 * 1024 * 1024);
+    inst->expand_temp  = array_create_unreserved<u64>(1024 * 1024);
 }
 
 struct Sat_dimacs {
@@ -511,9 +519,9 @@ enum Types_factorio: u64 {
 };
 
 enum Groups_factorio: u64 {
-    line_empty  = GROUP_FACTORIO | 0x02ull << 16,
-    line_full   = GROUP_FACTORIO | 0x02ull << 16 | 1,
-    lines_empty = GROUP_FACTORIO | 0x03ull << 16,
+    line_empty  = GROUP_FACTORIO | 0x20ull << 16,
+    line_full   = GROUP_FACTORIO | 0x20ull << 16 | 1,
+    lines_empty = GROUP_FACTORIO | 0x30ull << 16,
 };
 
 enum Constraints_factorio: u64 {
@@ -546,7 +554,10 @@ enum Params_factorio: u64 {
 struct Dir {
     enum Dir_values: u8 {
         INVALID = 63, TOP, RIGHT, BOTTOM, LEFT, ALL, DIR_VALUES_SIZE,
-        BEG = TOP, END = ALL
+        BEG = TOP, END = ALL,
+    };
+    enum Field_var_type: u64 {
+        FVAR_DIR_MASK = 0xffull << 16,
     };
     
     s64 x, y; u8 dir;
@@ -580,15 +591,17 @@ struct Field {
     static constexpr s64 COORD_MASK = 0xffffffffull << 24;
     static constexpr s64 COORD_OFFSET = 32786;
     enum Field_var_type: u64 {
-        FVAR_TYPE_MASK = 0xfull << 16,
-        FVAR_NORMAL    = 0x1ull << 16,
-        FVAR_LINE      = 0x2ull << 16,
-        FVAR_LINEGROUP = 0x3ull << 16,
+        // Adjust line constants and dirs if you change these
+        FVAR_TYPE_MASK = 0xf0ull << 16,
+        FVAR_NORMAL    = 0x10ull << 16,
+        FVAR_LINE      = 0x20ull << 16,
+        FVAR_LINEGROUP = 0x30ull << 16,
+        FVAR_DIR       = 0x40ull << 16,
     };
     enum Field_modifier_mask: u64 {
-        FVAR_MOD_MASK = 0xf0ull << 16,
-        FVAR_SUMX     = 0x10ull << 16,
-        FVAR_SUMY     = 0x20ull << 16,
+        FVAR_MOD_MASK = 0xfull << 16,
+        FVAR_SUMX     = 0x1ull << 16,
+        FVAR_SUMY     = 0x2ull << 16,
     };
     enum Field_border_type: u8 {
         BORDER_EMPTY, BORDER_OUT, BORDER_INP
@@ -702,18 +715,21 @@ void factorio_expand(Sat_instance* inst, u64 ovar, Array_dyn<u64>* out_lits) {
         s64 n_linedim = hashmap_get(&inst->params, Sat::fpar_n_linedim);
         bool do_block = hashmap_get(&inst->params, Sat::fpar_do_block);
         
+        u64 mod = var & Field::FVAR_MOD_MASK;
+        assert(mod == 0 or mod == Field::FVAR_SUMX or mod == Field::FVAR_SUMY);
+            
         if (var & Field::COORD_MASK) {
             // A normal linegroup, either lines_all or lines_item
             Field f = Field::from_lit(ovar);
             for (s64 i = 0; i < n_linedim; ++i) {
-                array_push_back(out_lits, f.line_first | i << 8);
+                array_push_back(out_lits, f.line_first | mod | i << 8);
             }
 
-            if (ovar == f.lines_all) {
-                array_push_back(out_lits, f.line_sum);
-                if (do_block) array_push_back(out_lits, f.line_block);
+            if ((ovar^mod) == f.lines_all) {
+                array_push_back(out_lits, f.line_sum | mod);
+                if (do_block) array_push_back(out_lits, f.line_block | mod);
             } else {
-                assert(ovar == f.lines_item);
+                assert((ovar^mod) == f.lines_item);
             }
         } else {
             // This is the special empty linegroup (called lines_empty)
@@ -725,12 +741,17 @@ void factorio_expand(Sat_instance* inst, u64 ovar, Array_dyn<u64>* out_lits) {
         }
     } else if (ftype == Field::FVAR_LINE) {
         s64 len = hashmap_get(&inst->params, Sat::fpar_n_linelen);
-        if (var & Field::FVAR_MOD_MASK) len *= 2;
+        switch (var & Field::FVAR_MOD_MASK) {
+        case 0: break;
+        case Field::FVAR_SUMY:
+        case Field::FVAR_SUMX: len *= 2; break;
+        default: assert(false);
+        }
         
         if (var & Field::COORD_MASK) {
-            var |= Field::FVAR_NORMAL;
+            u64 vvar = (var & ~Sat::MASK_SUBTYPE) | Sat::VAR_FACTORIO | Field::FVAR_NORMAL;
             for (s64 i = 0; i < len; ++i) {
-                array_push_back(out_lits, var | (i+1));
+                array_push_back(out_lits, vvar | (i+1));
             }
         } else {
             // This is either line_empty or line_full
@@ -743,9 +764,11 @@ void factorio_expand(Sat_instance* inst, u64 ovar, Array_dyn<u64>* out_lits) {
                 array_push_back(out_lits, lit);
             }
         }
-    } else if (ftype == (u64)Dir::ALL << 16) {
+    } else if (ftype == Field::FVAR_DIR) {
+        assert((ovar & Dir::FVAR_DIR_MASK) == (Dir::ALL << 16ull));
+        u64 vvar = (ovar & ~Sat::MASK_SUBTYPE & ~Dir::FVAR_DIR_MASK) | Sat::VAR_FACTORIO;
         for (s64 d = Dir::BEG; d < Dir::END; ++d) {
-            array_push_back(out_lits, var | d << 16);
+            array_push_back(out_lits, vvar | d << 16);
         }
     } else {
         assert(false);
@@ -980,6 +1003,20 @@ void factorio_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
                 u64 lit = i+1 < arr1.size ? arr1[i+1] : var_false;
                 sat_add(inst, implies, {arr1[i], lit});
             }
+        } else {
+            assert(false);
+        }
+    } break;
+
+    case line_equal_const: {
+        assert(args.size == 2);
+        assert((args[0] & Field::FVAR_TYPE_MASK) == Field::FVAR_LINE);
+        Array_t<u64> arr = sat_expand(inst, {args[0]}, &inst->rewrite_temp);
+        s64 val = args[1];
+        assert(0 <= val and val <= arr.size);
+
+        for (s64 i = 0; i < arr.size; ++i) {
+            sat_add(inst, clause, {i < val ? arr[i] : ~arr[i]});
         }
     } break;
 
@@ -1063,11 +1100,10 @@ void factorio_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
                 sat_push_add_pop(inst, {eq_both}, lines_equal_half, {fo1.lines_all, fdr.sum_lines_all});
             }
             
-            
-            sat_push(inst, {f0.splitl, fd.out});
-            
             // If the other side would be out-of-bounds, no need to emit anything
             if (not f1.inbounds(inst)) continue;
+            
+            sat_push(inst, {f0.splitl, fd.out});
 
             if (do_block) {
                 // Check that both inputs block at the same rate
@@ -1100,12 +1136,12 @@ void factorio_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
 
             if (border_type == Field::BORDER_EMPTY) {
                 // Empty border tiles have neither input nor output
-                assert(args.size == 2);
+                assert(args.size == 3);
                 sat_add(inst, logical_and, {~fd.out, ~fd.inp});
                 
             } else if (border_type == Field::BORDER_OUT) {
                 // Output border tiles have their items concentrated in a single line
-                assert(args.size == 3);
+                assert(args.size == 4);
                 sat_add(inst, logical_and, {fd.out, ~fd.inp});
                 s64 index = args[3];
                 Array_t<u64> lines_item = sat_expand(inst, f.lines_item, &inst->rewrite_temp);
@@ -1116,7 +1152,7 @@ void factorio_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
                 
             } else if (border_type == Field::BORDER_INP) {
                 // Input border lines have items spread out
-                assert(args.size == 2);
+                assert(args.size == 3);
                 sat_add(inst, logical_and, {~fd.out, fd.inp});
                 Array_t<u64> lines = sat_expand(inst, f.lines_item, &inst->rewrite_temp);
                 for (u64 line: lines) {
