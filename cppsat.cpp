@@ -21,6 +21,7 @@ struct Sat_instance {
 
     Array_dyn<u64> rewrite_temp;
     Array_dyn<u64> expand_temp;
+    Array_dyn<u64> explain_temp;
 
     s64 temp_var_count;
 
@@ -30,10 +31,12 @@ struct Sat_instance {
     using Expand_func = void(*)(Sat_instance*, u64, Array_dyn<u64>*);
     Array_t<Expand_func> expand_funcs;
     
-    using Explain_func = void(*)(Sat_instance*, u64, Array_dyn<u8>*);
+    using Explain_func = bool(*)(Sat_instance*, u64, Array_t<u64>, Array_dyn<u8>*);
     Hashmap<Explain_func> explain_funcs;
 
     Hashmap<s64> params;
+
+    u64 debug_forbidden_id = 0;
 };
 
 namespace Sat {
@@ -140,6 +143,7 @@ Array_t<u64> sat_expand(Sat_instance* inst, Array_t<u64> lits, Array_dyn<u64>* o
     assert(out_lits);
     s64 off = out_lits->size;
     for (u64 lit: lits) {
+        assert(lit != inst->debug_forbidden_id);
         u64 type, subtype, suffix;
         sat_decompose(lit, &type, &subtype, &suffix);
 
@@ -200,6 +204,11 @@ Array_t<u64> sat_expand_recursive(Sat_instance* inst, Array_t<u64> lits, Array_d
 
     return array_subarray(*out_lits, off, out_lits->size);
 }
+
+Array_t<u64> sat_expand_recursive(Sat_instance* inst, u64 lit, Array_dyn<u64>* out_lits) {
+    return sat_expand_recursive(inst, std::initializer_list<u64>{lit}, out_lits);
+}
+
 
 u64 sat_vget(Array_t<u64> vec, s64 i) {
     return 0 <= i and i < vec.size ? vec[i] : Sat::var_false;
@@ -398,6 +407,9 @@ void sat_add(Sat_instance* inst, u64 op, Array_t<u64> args) {
     u64 type, subtype, suffix;
     sat_decompose(op, &type, &subtype, &suffix);
 
+    assert(op != inst->debug_forbidden_id);
+    for (u64 lit: args) assert(lit != inst->debug_forbidden_id);
+    
     assert(type == Sat::CONSTRAINT);
     
     s64 prev = inst->rewrite_temp.size;
@@ -423,6 +435,169 @@ void sat_add(Sat_instance* inst, u64 op, Array_t<u64> args) {
     assert(inst->context_literals.size == prev_context);
 }
 
+void sat_explain(Sat_instance* inst, u64 id, Array_dyn<u8>* into);
+void sat_explain(Sat_instance* inst, u64 id, Array_t<u64> args, Array_dyn<u8>* into);
+    
+void _sat_explain_print_joined(Sat_instance* inst, Array_t<u64> ids, char const* join_str, Array_dyn<u8>* into) {
+    bool first = true;
+    for (u64 lit: ids) {
+        if (not first) array_printf(into, join_str);
+        else           first = false;
+        sat_explain(inst, lit, into);
+    }
+}
+
+bool sat_explain_undefined(Sat_instance* inst, u64 id, Array_t<u64> args, Array_dyn<u8>* into) {
+    using namespace Sat;
+    
+    u64 type, subtype, suffix;
+    sat_decompose(id, &type, &subtype, &suffix);
+
+    if (type == VAR) {
+        array_printf(into, "$%llx:%llx", (subtype >> 56) & 0xf, suffix);
+        return true;
+    } else if (type == CONSTRAINT) {
+        array_printf(into, "<%llx:%llx>", (subtype >> 56) & 0xf, suffix);
+        return false;
+    } else if (type == GROUP) {
+        return false;
+    } else {
+        assert(false);
+    }
+}
+    
+void sat_explain(Sat_instance* inst, u64 id, Array_t<u64> args, Array_dyn<u8>* into) {
+    using namespace Sat;
+
+    u64 type, subtype;
+    sat_decompose(id, &type, &subtype);
+
+    u64 id_mod = id;
+    if (type == VAR or type == GROUP) {
+        u64 mask = -(id >> 63);
+        if (mask) array_printf(into, u8"¬");    
+        id_mod = id ^ mask;
+    }
+
+    s64 off = inst->explain_temp.size;
+    defer { inst->explain_temp.size = off; };
+        
+    Sat_instance::Explain_func* func = hashmap_getptr(&inst->explain_funcs, subtype);
+    bool done = func
+        ? (*func)(inst, id_mod, args, into)
+        : sat_explain_undefined(inst, id_mod, args, into);
+
+    if (not done) {
+        if (type == VAR) {
+            // This does not really make sense. Why would you want to not explain a variable?  There
+            // is not really anything recursive. For now, let's just panix.
+            assert(false);
+        } else if (type == CONSTRAINT) {
+            // Print the arguments in standard function form
+            array_printf(into, "(");
+            _sat_explain_print_joined(inst, args, ", ", into);
+            array_printf(into, ")");
+        } else if (type == GROUP) {
+            array_printf(into, "[");
+            _sat_explain_print_joined(inst, args, ", ", into);
+            array_printf(into, "]");
+        } else {
+            assert(false);
+        }
+    }
+}
+
+void sat_explain(Sat_instance* inst, u64 id, Array_dyn<u8>* into) {
+    using namespace Sat;
+    
+    u64 type, subtype, suffix;
+    sat_decompose(id, &type, &subtype, &suffix);
+
+    if (type == VAR) {
+        return sat_explain(inst, id, {}, into);
+    } else if (type == GROUP) {
+        s64 off = inst->explain_temp.size;
+        defer { inst->explain_temp.size = off; };
+        
+        Array_t<u64> arr = sat_expand(inst, id, &inst->explain_temp);
+        sat_explain(inst, id, arr, into);
+    } else {
+        assert(false);
+    }
+}
+
+bool sat_explain_basic(Sat_instance* inst, u64 id, Array_t<u64> args, Array_dyn<u8>* into) {
+    using namespace Sat;
+    
+    u64 type, subtype, suffix;
+    sat_decompose(id, &type, &subtype, &suffix);
+    
+    if (type == VAR) {
+        if (subtype == VAR_TEMP) {
+            array_printf(into, "$%lld", suffix);
+        } else if (subtype == VAR_CONST) {
+            if (id == var_false) {
+                array_printf(into, u8"⊥");
+            } else if (id == var_true) {
+                array_printf(into, u8"⊤");
+            } else {
+                assert(false);
+            }
+        } else {
+            assert(false);
+        }
+    } else if (type == GROUP) {
+        assert(subtype == GROUP_STORED);
+        array_printf(into, "[");
+        _sat_explain_print_joined(inst, args, ", ", into);
+        array_printf(into, "]");
+    } else if (type == CONSTRAINT) {
+        assert(subtype == CONSTRAINT_BASIC);
+        
+        if (id == clause or id == clause_noexpand) {
+            _sat_explain_print_joined(inst, args, u8" ∨ ", into);
+        } else if (id == at_most_one) {
+            _sat_explain_print_joined(inst, args, " + ", into);
+            array_printf(into, u8" ≤ 1");
+        } else if (id == exactly_one) {
+            _sat_explain_print_joined(inst, args, " + ", into);
+            array_printf(into, " = 1");
+        } else if (id == logical_and) {
+            _sat_explain_print_joined(inst, args, u8" ∧ ", into);
+        } else if (id == implies) {
+            assert(args.size == 2);
+            Array_t<u64> arr0 = sat_expand_recursive(inst, args[0], &inst->explain_temp);
+            Array_t<u64> arr1 = sat_expand_recursive(inst, args[1], &inst->explain_temp);
+            _sat_explain_print_joined(inst, arr0, u8" ∧ ", into);
+            array_printf(into, u8" ⇒ ");
+            _sat_explain_print_joined(inst, arr1, u8" ∨ ", into);
+        } else if (id == equivalent) {
+            assert(args.size == 2);
+            sat_explain(inst, args[0], into);
+            array_printf(into, u8" ⇔ ");
+            sat_explain(inst, args[1], into);
+        } else if (id == merge) {
+            assert(args.size == 3);
+            sat_explain(inst, args[2], into);
+            array_printf(into, " = merge(");
+            sat_explain(inst, args[0], into);
+            array_printf(into, ", ");
+            sat_explain(inst, args[1], into);
+            array_printf(into, ")");
+        } else if (id == merge_multi) {
+            assert(args.size == 2);
+            Array_t<u64> arr = sat_expand(inst, args[0], &inst->explain_temp);
+            sat_explain(inst, args[1], into);
+            array_printf(into, " = merge_multi(");
+            _sat_explain_print_joined(inst, arr, ", ", into);
+            array_printf(into, ")");
+        }
+    } else {
+        assert(false);
+    }
+    return true;
+}
+    
 void sat_push(Sat_instance* inst, Array_t<u64> condition) {
     array_append(&inst->context_literals, condition);
     assert(inst->context_literals.size != 4);
@@ -456,6 +631,9 @@ void sat_init(Sat_instance* inst) {
     
     sat_register_expand_func(inst, Sat::GROUP_STORED, &sat_expand_stored);
     sat_register_rewrite_func(inst, Sat::CONSTRAINT_BASIC, &sat_rewrite_basic);
+    for (u64 subtype: {Sat::VAR_TEMP, Sat::VAR_CONST, Sat::GROUP_STORED, Sat::CONSTRAINT_BASIC}) {
+        sat_register_explain_func(inst, subtype, &sat_explain_basic);
+    }
 
     inst->temp_var_count = 0;
 
@@ -464,6 +642,7 @@ void sat_init(Sat_instance* inst) {
 
     inst->rewrite_temp = array_create_unreserved<u64>(128 * 1024 * 1024);
     inst->expand_temp  = array_create_unreserved<u64>(1024 * 1024);
+    inst->explain_temp = array_create_unreserved<u64>(1024 * 1024);
 }
 
 struct Sat_dimacs {
@@ -506,6 +685,28 @@ void sat_write_dimacs(Sat_instance* inst, Sat_dimacs* dimacs) {
             array_printf(&dimacs->text, "%d ", (int)dilit);
         }
         array_printf(&dimacs->text, "0\n");
+    }
+}
+
+void sat_write_human(Sat_instance* inst, Array_dyn<u8>* into) {
+    Array_dyn<s64> parent_stack;
+    defer { array_free(&parent_stack); };
+    
+    for (s64 i = 0; i < inst->constraint_parent.size; ++i) {
+        Array_t<u64> data = array_subindex(inst->constraint_offsets, inst->constraint_data, i);
+        s64 parent = inst->constraint_parent[i];
+
+        while (parent_stack.size and parent_stack.back() != parent) {
+            --parent_stack.size;
+        }
+        array_push_back(&parent_stack, i);
+
+        for (s64 j = 0; j+2 < parent_stack.size*2; ++j) {
+            array_push_back(into, (u8)' ');
+        }
+        
+        sat_explain(inst, data[0], array_subarray(data, 1), into);
+        array_push_back(into, (u8)'\n');
     }
 }
 
@@ -566,6 +767,7 @@ struct Dir {
 
     Dir() = default;
     Dir(s64 x, s64 y, u8 dir);
+    static Dir from_lit(u64 lit);
 
     Dir move(s64 dx = 0, s64 dy = 1) {
         assert(BEG <= dir and dir < END);
@@ -597,6 +799,7 @@ struct Field {
         FVAR_LINE      = 0x20ull << 16,
         FVAR_LINEGROUP = 0x30ull << 16,
         FVAR_DIR       = 0x40ull << 16,
+        FVAR_LINEEL    = 0x50ull << 16,
     };
     enum Field_modifier_mask: u64 {
         FVAR_MOD_MASK = 0xfull << 16,
@@ -635,12 +838,12 @@ void factorio_field_init_base(Field* f) {
     u64 base_orig = (u64)(f->x + add) << 40 | (u64)(f->y + add) << 24;
     u64 i = 0;
     {u64 base = base_orig | Sat::VAR_FACTORIO | Field::FVAR_NORMAL;
-    f->empty  = base+++i; f->belt   = base+++i;
-    f->split  = base+++i; f->splitl = base+++i; f->splitr = base+++i;
-    f->under  = base+++i; f->underh = base+++i; f->underv = base+++i;}
+    f->empty  = base+ ++i; f->belt   = base+ ++i;
+    f->split  = base+ ++i; f->splitl = base+ ++i; f->splitr = base+ ++i;
+    f->under  = base+ ++i; f->underh = base+ ++i; f->underv = base+ ++i;}
     
     {u64 base = base_orig | Sat::GROUP_FACTORIO | Field::FVAR_LINEGROUP;
-    f->lines_all  = base+++i; f->lines_item = base+++i;}
+    f->lines_all  = base+ ++i; f->lines_item = base+ ++i;}
     
     {u64 base = base_orig | Sat::GROUP_FACTORIO | Field::FVAR_LINE;
     f->line_first = base;
@@ -706,6 +909,16 @@ Dir::Dir(s64 x, s64 y, u8 dir): x{x}, y{y}, dir{dir} {
 
 }
 
+Dir Dir::from_lit(u64 lit) {
+    u64 subtype, suffix;
+    sat_decompose(lit, nullptr, &subtype, &suffix);
+    assert(subtype == Sat::VAR_FACTORIO or subtype == Sat::GROUP_FACTORIO);
+    s64 x = (suffix >> 40 & 0xffff) - Field::COORD_OFFSET;
+    s64 y = (suffix >> 24 & 0xffff) - Field::COORD_OFFSET;
+    u8 dir = suffix >> 16 & 0xff;
+    return {x, y, dir};
+}
+
 void factorio_expand(Sat_instance* inst, u64 ovar, Array_dyn<u64>* out_lits) {
     assert((ovar & Sat::MASK_SUBTYPE) == Sat::GROUP_FACTORIO);
 
@@ -749,7 +962,7 @@ void factorio_expand(Sat_instance* inst, u64 ovar, Array_dyn<u64>* out_lits) {
         }
         
         if (var & Field::COORD_MASK) {
-            u64 vvar = (var & ~Sat::MASK_SUBTYPE) | Sat::VAR_FACTORIO | Field::FVAR_NORMAL;
+            u64 vvar = (var & ~Sat::MASK_SUBTYPE) | Sat::VAR_FACTORIO | Field::FVAR_LINEEL;
             for (s64 i = 0; i < len; ++i) {
                 array_push_back(out_lits, vvar | (i+1));
             }
@@ -1021,6 +1234,7 @@ void factorio_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
     } break;
 
     case field_unary: {
+        assert(args.size == 2);
         Field f {(s64)args[0], (s64)args[1]};
         bool do_block = hashmap_get(&inst->params, Sat::fpar_do_block);
         
@@ -1172,6 +1386,145 @@ void factorio_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
 
 }
 
+bool factorio_explain(Sat_instance* inst, u64 id, Array_t<u64> args, Array_dyn<u8>* into) {
+    using namespace Sat;
+    
+    u64 type, subtype, suffix;
+    sat_decompose(id, &type, &subtype, &suffix);
+    
+    if (type == VAR or type == GROUP) {
+        assert(subtype == VAR_FACTORIO or subtype == GROUP_FACTORIO);
+        u64 fvar_type = suffix & Field::FVAR_TYPE_MASK;
+        u64 fvar_mod  = suffix & Field::FVAR_MOD_MASK;
+        bool has_coords = suffix >> 24 & 0xffffffffull;
+        s64 x = (suffix >> 40 & 0xffff) - Field::COORD_OFFSET;
+        s64 y = (suffix >> 24 & 0xffff) - Field::COORD_OFFSET;
+        u64 val = suffix & 0xff;
+        u64 val2 = suffix >> 8 & 0xff;
+
+        char const* names[] = {
+            nullptr, "empty", "belt", "split", "splitl", "splitr", "under", "underh", "underv"
+        };
+        s64 names_size = sizeof(names) / sizeof(names[0]);
+        
+        char const* mod_suf = "";
+        if (fvar_mod == Field::FVAR_SUMX) {
+            mod_suf = "_sumx";
+        } else if (fvar_mod == Field::FVAR_SUMY) {
+            mod_suf = "_sumy";
+        }
+        
+        if (fvar_type == Field::FVAR_NORMAL) {
+            assert(0 < val and val < names_size);
+            assert(val2 == 0);
+            assert(fvar_mod == 0);
+            assert(has_coords);
+            array_printf(into, "(%lld,%lld).%s", x, y, names[val]);
+        } else if (fvar_type == Field::FVAR_LINE) {
+            if (id == Sat::line_empty) {
+                array_printf(into, "0_line");
+            } else if (id == Sat::line_full) {
+                array_printf(into, "1_line");
+            } else {
+                assert(has_coords);
+                assert(val == 0);
+                
+                array_printf(into, "(%lld,%lld).lines%s[", x, y, mod_suf);
+                if (val2 == 0xfe) {
+                    array_printf(into, "sum");
+                } else if (val2 == 0xff) {
+                    array_printf(into, "block");
+                } else {
+                    array_printf(into, "%lld", val2);
+                }
+                array_printf(into, "]");
+            }
+        } else if (fvar_type == Field::FVAR_LINEGROUP) {
+            if (id == Sat::lines_empty) {
+                array_printf(into, "0_lines");
+            } else {
+                char const* lnames[] = {"lines_all", "lines_item"};
+                s64 lnames_size = sizeof(lnames) / sizeof(lnames[0]);
+
+                s64 val_i = val - names_size;
+                
+                assert(has_coords);
+                assert(0 <= val_i and val_i < lnames_size);
+                assert(val2 == 0);
+                assert(has_coords);
+                array_printf(into, "(%lld,%lld).%s%s", x, y, lnames[val_i], mod_suf);
+            }
+        } else if (fvar_type == Field::FVAR_LINEEL) {
+            assert(has_coords);
+            array_printf(into, "(%lld,%lld).lines%s[%lld][%lld]", x, y, mod_suf, val, val2);
+        } else if (fvar_type == Field::FVAR_DIR) {
+            u8 dir = (id & Dir::FVAR_DIR_MASK) >> 16;
+
+            char const* dnames[] = {"top", "rig", "bot", "lef", "all"};
+            s64 dnames_size = sizeof(dnames) / sizeof(dnames[0]);
+            char const* ddnames[] = {nullptr, "inp", "out", "sid"};
+            s64 ddnames_size = sizeof(ddnames) / sizeof(ddnames[0]);
+            
+            assert(Dir::BEG <= dir and dir <= Dir::ALL);
+            assert(dir - Dir::BEG < dnames_size);
+            assert(0 < val and val < ddnames_size);
+            array_printf(into, "(%lld,%lld).%s.%s", x, y, dnames[dir - Dir::BEG], ddnames[val]);
+        } else {
+            assert(false);
+        }
+        
+        return true;
+    } else if (type == CONSTRAINT) {
+        assert(subtype == CONSTRAINT_FACTORIO);
+        char const* names[] = {
+            nullptr, "field_basic", "field_underground", "field_border", "field_unary",
+            "field_border_unary", "line_at_most", "line_equal_half", "line_equal_const",
+            "line_equal", "lines_equal", "lines_equal_half"
+        };
+        s64 names_size = sizeof(names) / sizeof(names[0]);
+        u64 argtype[] = {
+            0, 11, 11, 11, 11,
+            1131, 22, 22, 21,
+            22, 22, 22
+        };
+        s64 argtype_size = sizeof(argtype) / sizeof(argtype[0]);
+        assert(argtype_size == names_size);
+
+        char const* bnames_[] = {"empty", "out", "inp"};
+        Array_t<char const*> bnames = {bnames_, sizeof(bnames_) / sizeof(bnames_[0])};
+
+        assert(0 < suffix and suffix < names_size);
+        array_printf(into, "%s", names[suffix]);
+        u64 type_rev = argtype[suffix];
+        u64 type = 0;
+        while (type_rev) {
+            type = 10*type + type_rev%10; type_rev /= 10;
+        }
+        
+        array_printf(into, "(");
+        
+        bool first = true;
+        for (u64 arg: args) {
+            if (first) first = false;
+            else array_printf(into, ", ");
+            
+            switch (type % 10) {
+            case 1: array_printf(into, "%lld", arg); break;
+            case 2: sat_explain(inst, arg, into);    break;
+            case 3: array_printf(into, "%s", bnames[arg]); break;
+            default: assert(false);
+            };
+            type /= 10;
+        }
+        
+        array_printf(into, ")");
+        return true;
+    } else {
+        assert(false);
+    }
+    return false;
+}
+
 void factorio_add_fields(Sat_instance* inst, Array_t<s64> params, Array_t<s64> yoff_output, Array_t<s64> yoff_input) {
     using namespace Sat;
 
@@ -1239,9 +1592,9 @@ void factorio_balancer(Sat_instance* inst, Factorio_params params) {
 
     sat_register_expand_func(inst, GROUP_FACTORIO, &factorio_expand);
     sat_register_rewrite_func(inst, CONSTRAINT_FACTORIO, &factorio_rewrite);
-    //for (u64 i: {VAR_FACTORIO, GROUP_FACTORIO, CONSTRAINT_FACTORIO}) {
-    //    sat_register_explain_func(inst, i, &factorio_explain);
-    //}
+    for (u64 i: {VAR_FACTORIO, GROUP_FACTORIO, CONSTRAINT_FACTORIO}) {
+        sat_register_explain_func(inst, i, &factorio_explain);
+    }
 
     factorio_add_fields(inst, arr, params.yoff_output, params.yoff_input);
 }
@@ -1254,11 +1607,16 @@ int main() {
     
     Sat_instance inst;
     sat_init(&inst);
+    inst.debug_forbidden_id = 0x2880118012300000ull;
 
     factorio_balancer(&inst, p);
 
     Sat_dimacs dimacs;
     sat_write_dimacs(&inst, &dimacs);
 
-    fwrite(dimacs.text.data, 1, dimacs.text.size, stdout);
+    //fwrite(dimacs.text.data, 1, dimacs.text.size, stdout);
+
+    Array_dyn<u8> human;
+    sat_write_human(&inst, &human);
+    fwrite(human.data, 1, human.size, stdout);
 }
