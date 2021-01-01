@@ -1,9 +1,4 @@
 
-#include "global.hpp"
-
-#include "hashmap.cpp"
-#include "array_linux.cpp"
-
 struct Sat_instance {
     Array_dyn<s64> clause_offsets;
     Array_dyn<u64> clause_literals;
@@ -211,7 +206,7 @@ Array_t<u64> sat_expand_recursive(Sat_instance* inst, u64 lit, Array_dyn<u64>* o
 
 
 u64 sat_vget(Array_t<u64> vec, s64 i) {
-    return 0 <= i and i < vec.size ? vec[i] : Sat::var_false;
+    return 0 <= i and i < vec.size ? vec[i] : (u64)Sat::var_false;
 }
 
 Array_t<u64> sat_subrange(Sat_instance* inst, Array_t<u64> arr, s64 beg, s64 end, s64 step) {
@@ -1597,26 +1592,4 @@ void factorio_balancer(Sat_instance* inst, Factorio_params params) {
     }
 
     factorio_add_fields(inst, arr, params.yoff_output, params.yoff_input);
-}
-
-int main() {
-    Array_dyn<s64> yoff_output, yoff_input;
-    array_append(&yoff_output, {0});
-    array_append(&yoff_input, {0, 1});
-    Factorio_params p {3, 2, 10, 1, false, yoff_output, yoff_input};
-    
-    Sat_instance inst;
-    sat_init(&inst);
-    inst.debug_forbidden_id = 0x2880118012300000ull;
-
-    factorio_balancer(&inst, p);
-
-    Sat_dimacs dimacs;
-    sat_write_dimacs(&inst, &dimacs);
-
-    //fwrite(dimacs.text.data, 1, dimacs.text.size, stdout);
-
-    Array_dyn<u8> human;
-    sat_write_human(&inst, &human);
-    fwrite(human.data, 1, human.size, stdout);
 }

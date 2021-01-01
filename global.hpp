@@ -225,6 +225,12 @@ void array_resize(Array_dyn<T>* arr, s64 count) {
 }
 
 // Add element to the end of an array, reallocate if necessary.
+template <typename T>
+void array_push_back(Array_dyn<T>* into, T elem) {
+    array_reserve(into, into->size + 1);
+    ++into->size;
+    into->data[into->size-1] = elem;
+}
 template <typename T, typename T_>
 void array_push_back(Array_dyn<T>* into, T_ elem) {
     array_reserve(into, into->size + 1);
