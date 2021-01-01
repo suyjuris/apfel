@@ -184,9 +184,10 @@ void asset_finalize(Asset_store* store, bool do_pack) {
         perror("Error"); exit(1202);
     }
 
-    if (platform_chmod(f2, 0755)) {
+    if (platform_chmod_try(fileno(f2), 0755)) {
         fprintf(stderr, "Warning: Could not mark file '%s' as executable\n", path2);
         perror("Warning");
+        platform_error_clear();
     }
     
     {char buf[4096];

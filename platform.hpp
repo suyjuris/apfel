@@ -117,8 +117,62 @@ u64 platform_now_real();
 // Return the number of frames since program start
 u64 platform_frame_count();
 
-// Change the mode of the underlying file descriptor
-int platform_chmod(FILE* f, u32 mode);
+extern Array_dyn<u8> platform_error_buf;
+void platform_error_print(Array_t<u8> prefix = "Error"_arr);
+void platform_error_clear();
+
+template <typename... T>
+void platform_error_printf(char const* fmt, T... args) {
+    assert(fmt);
+    if (fmt && fmt[0] == '$') {
+        array_printf(&platform_error_buf, "%s\n", strerror(errno));
+        ++fmt;
+        fmt += fmt[0] == ' ';
+    }
+    array_printf(&platform_error_buf, fmt, args...);
+}
+
+namespace Platform {
+
+enum Open_flags: u64 {
+    OPEN_READ  = 1,
+    OPEN_WRITE = 2,
+    OPEN_CREATE = 4,
+    OPEN_APPEND = 8,
+    OPEN_TRUNCATE = 16
+};
+
+enum Write_all_code {
+    WRITE_SUCCESS = 0,
+    WRITE_ERROR = 101,
+    WRITE_EOF = 102,
+    WRITE_WOULDBLOCK = 103
+};
+
+enum Read_all_code {
+    READ_SUCCESS = 0,
+    READ_ERROR = 201,
+    READ_EOF = 202,
+    READ_WOULDBLOCK = 203
+};
+
+enum Seek_whence: u8 {
+    P_SEEK_SET,
+    P_SEEK_CUR,
+    P_SEEK_END
+};
+
+};
+
+int platform_open_try(Array_t<u8> path, u64 flags, u32 mode, int* out_fd);
+int platform_request_lock_try(int fd, bool* out_success);
+int platform_write_try(int fd, Array_t<u8> buf);
+int platform_read_try (int fd, Array_t<u8> buf);
+int platform_seek_try(int fd, u64 offset, u8 whence, u64* out_offset=nullptr);
+int platform_truncate_try(int fd, u64 size);
+int platform_close_try(int fd);
+int platform_chmod_try(int fd, u32 mode);
+
 
 // The following are callbacks to be implemented by the application
 

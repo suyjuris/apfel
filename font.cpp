@@ -40,6 +40,7 @@ struct Font_data {
     struct Draw_glyph {
         u32 glyph;
         Vec2 pos, scale;
+        Color fill;
     };
     struct Stitch_cmd {
         u8 type0, type1;
@@ -84,6 +85,7 @@ struct Font_data {
     struct Draw_word {
         u32 word;
         Vec2 pos;
+        Color fill;
     };
 
     struct Word {
@@ -147,6 +149,7 @@ struct Font_data {
     in vec2 off;
     in vec2 size;
     in int p_base;
+    in vec4 fill;
     uniform samplerBuffer p_data;
     uniform int p_length;
     uniform vec2 origin;
@@ -156,6 +159,7 @@ struct Font_data {
     out vec2 v_p1;
     out vec2 v_p2;
     out vec2 v_sense;
+    out vec4 v_fill;
     
     void main() {
         int index = p_base + gl_InstanceID % p_length;
@@ -187,6 +191,8 @@ struct Font_data {
         vec2 w = vec2(sp2.y-sp0.y, sp0.x-sp2.x);
         v_sense.x = sense.x * sign(v_p2.x);
         v_sense.y = sense.y * sign(dot(v_p1, w));
+
+        v_fill = fill;
     }
 #endif
     
@@ -196,6 +202,7 @@ struct Font_data {
     in vec2 v_p1;
     in vec2 v_p2;
     in vec2 v_sense;
+    in vec4 v_fill;
     out vec4 color;
     
     void main() {
@@ -228,7 +235,7 @@ struct Font_data {
         float d2 = clamp(dist * scale_p + 0.5, 0, 1);
         //float d2 = smoothstep(0, 1, dist * scale_p + 0.5);
         float c = d2 * x_fac * v_sense.x;
-        color = vec4(c/16.0, 0, 0, 1);
+        color = vec4(v_fill * c/16.0);
     }
 #endif
     
@@ -245,16 +252,12 @@ struct Font_data {
 
 #ifdef ASSET_font_blend_f
     #version 150 core
-    uniform sampler2D sampler;    
-    uniform vec4 fill;
+    uniform sampler2D sampler;
     in vec2 v_tpos;
     out vec4 color;
     
     void main() {
-        vec4 col = fill;
-        col.a *= texture2D(sampler, v_tpos).r * 16.0;
-        //col = vec4(col.a, 0, -col.a, abs(col.a));
-        color = col;
+        color = texture2D(sampler, v_tpos) * 16.0;
     }
 #endif
 
@@ -508,13 +511,13 @@ Font_data::Glyph_handle _font_glyph_get_handle(Font_data* fonts, s64 font_base, 
     return handle;
 }
 
-void font_draw_codepoint_base(Font_data* fonts, s64 font_base, u32 codepoint, Vec2 pos, Vec2 scale, float* out_advance=nullptr) {
+void font_draw_codepoint_base(Font_data* fonts, s64 font_base, u32 codepoint, Vec2 pos, Vec2 scale, Color fill, float* out_advance=nullptr) {
     font_base ^= Font_data::MAGIC_INFOS;
     Font_data::Glyph_handle handle = _font_glyph_get_handle(fonts, font_base, codepoint);
 
     if (handle.index < 0xfffe) {
         ++fonts->glyph_counts.data[handle.index];
-        array_push_back(&fonts->draw_glyphs, {handle.index, pos, scale});
+        array_push_back(&fonts->draw_glyphs, {handle.index, pos, scale, fill});
     }
     if (out_advance) *out_advance = handle.advance * scale.x;
 }
@@ -524,22 +527,84 @@ void font_metrics_codepoint_get(
     float* out_advance=nullptr, float* out_lsb=nullptr
 ) {
     auto inst = &fonts->instances[font_instance ^ Font_data::MAGIC_INSTANCES];
-    auto info = &fonts->infos    [inst->info    ^ Font_data::MAGIC_INFOS];
+    auto info = &fonts->infos    [inst->info];
     int advance, lsb;
     stbtt_GetCodepointHMetrics(info, codepoint, &advance, &lsb);
     if (out_advance) *out_advance = advance * inst->scale;
-    if (out_lsb) *out_lsb = lsb * inst->scale;
+    if (out_lsb)     *out_lsb     = lsb     * inst->scale;
+}
+
+// Decode the first unicode codepoint in buf, return the number of bytes it is long. The result value of the codepoint is written into c_out.
+s64 _font_decode_utf8(Array_t<u8> buf, u32* c_out = nullptr) {
+    static bool warning_was_given;
+    
+    u32 c = buf[0];
+    s64 c_bytes = c&128 ? c&64 ? c&32 ? c&16 ? 4 : 3 : 2 : -1 : 1;
+    if (buf.size < c_bytes) c_bytes = -1;
+    
+    if (c_bytes == 1) {
+        // nothing
+    } else if (c_bytes == 2) {
+        c = (buf[0]&0x1f) << 6 | (buf[1]&0x3f);
+    } else if (c_bytes == 3) {
+        c = (buf[0]&0xf) << 12 | (buf[1]&0x3f) << 6 | (buf[2]&0x3f);
+    } else if (c_bytes == 4) {
+        c = (buf[0]&0x7) << 18 | (buf[1]&0x3f) << 12 | (buf[2]&0x3f) << 6 | (buf[3]&0x3f);
+    } else {
+        if (not warning_was_given) {
+            fprintf(stderr, "Warning: encountered invalid utf-8 sequence (this warning will not show again)\n");
+            warning_was_given = true;
+        }
+        assert(false);
+        c = '?';
+        c_bytes = 1;
+    }
+    if (c_out) *c_out = c;
+    return c_bytes;
+}
+
+void font_metrics_string_get(
+    Font_data* fonts, s64 font_instance, Array_t<u8> str,
+    float* out_advance=nullptr, float* out_lsb=nullptr
+) {
+    float advance_total = 0.f;
+    for (s64 i = 0; i < str.size;) {
+        u32 c;
+        s64 bytes = _font_decode_utf8(array_subarray(str, i, str.size), &c);
+        i += bytes;
+        float advance;
+        font_metrics_codepoint_get(fonts, font_instance, c, &advance, i == 0 ? out_lsb : nullptr);
+        advance_total += advance;
+    }
+    if (out_advance) *out_advance = advance_total;
 }
 
 void font_draw_codepoint(
-    Font_data* fonts, s64 font_instance, u32 codepoint, Vec2 pos,
+    Font_data* fonts, s64 font_instance, u32 codepoint, Vec2 pos, Color fill,
     float* x_out=nullptr, float* yn_out=nullptr
 ) {
     auto inst = fonts->instances[font_instance ^ Font_data::MAGIC_INSTANCES];
-    font_draw_codepoint_base(fonts, inst.info, codepoint, pos, {inst.scale, inst.scale}, x_out);
+    font_draw_codepoint_base(fonts, inst.info ^ Font_data::MAGIC_INFOS,
+        codepoint, pos, {inst.scale, inst.scale}, fill, x_out);
 
     if (x_out) *x_out += pos.x;
     if (yn_out) *yn_out = pos.y + inst.newline;
+}
+
+void font_draw_string(
+    Font_data* fonts, s64 font_instance, Array_t<u8> str, Vec2 pos, Color fill={0,0,0,255},
+    float* x_out=nullptr, float* yn_out=nullptr
+) {
+    float yn;
+    for (s64 i = 0; i < str.size;) {
+        u32 c;
+        s64 bytes = _font_decode_utf8(array_subarray(str, i, str.size), &c);
+        i += bytes;
+        font_draw_codepoint(fonts, font_instance, c, pos, fill, &pos.x, &yn);
+    }
+
+    if (x_out) *x_out = pos.x;
+    if (yn_out) *yn_out = yn;
 }
 
 u32 font_word_create(Font_data* fonts, s64 font_instance, Array_t<u32> codepoints) {
@@ -603,9 +668,9 @@ u32 font_word_create(Font_data* fonts, s64 font_instance, Array_t<u32> codepoint
 }
 
 
-void font_draw_word(Font_data* fonts, u32 word, Vec2 pos, float* out_advance=nullptr) {
+void font_draw_word(Font_data* fonts, u32 word, Vec2 pos, Color fill, float* out_advance=nullptr) {
     word ^= Font_data::MAGIC_WORD;
-    array_push_back(&fonts->draw_words, {word, pos});
+    array_push_back(&fonts->draw_words, {word, pos, fill});
     Font_data::Word w = fonts->words[word];
     if (out_advance) {
         auto inst = fonts->instances[w.font_instance ^ Font_data::MAGIC_INSTANCES];
@@ -617,7 +682,7 @@ void font_frame_draw(Font_data* fonts, s64 screen_w, s64 screen_h) {
     if (screen_w != fonts->tex_coverage_w or screen_h != fonts->tex_coverage_h) {
         glActiveTexture(fonts->texture_unit);
         glBindTexture(GL_TEXTURE_2D, fonts->tex_coverage);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_R16_SNORM, screen_w, screen_h, 0, GL_RED, GL_UNSIGNED_BYTE, 0);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16_SNORM, screen_w, screen_h, 0, GL_RED, GL_UNSIGNED_BYTE, 0);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
@@ -642,7 +707,7 @@ void font_frame_draw(Font_data* fonts, s64 screen_w, s64 screen_h) {
     }
 
     glBindFramebuffer(GL_FRAMEBUFFER, fonts->path_fbo);
-    glClearColor(0.f, 0.f, 0.f, 1.f);
+    glClearColor(0.f, 0.f, 0.f, 0.f);
     glClear(GL_COLOR_BUFFER_BIT);
     glBlendFunc(GL_ONE, GL_ONE);
 
@@ -654,10 +719,11 @@ void font_frame_draw(Font_data* fonts, s64 screen_w, s64 screen_h) {
 
     opengl_shader_attrib_divisor(&fonts->path, 0, "pos", 0);
     
-    Array_dyn<Vec2>* target_pos  = opengl_buffer<Vec2>(&fonts->path, 0, "pos");
-    Array_dyn<Vec2>* target_off  = opengl_buffer<Vec2>(&fonts->path, 1, "off");
-    Array_dyn<Vec2>* target_size = opengl_buffer<Vec2>(&fonts->path, 2, "size");
-    Array_dyn<u32>*  target_path = opengl_buffer<u32> (&fonts->path, 3, "p_base");
+    Array_dyn<Vec2>*  target_pos  = opengl_buffer<Vec2> (&fonts->path, 0, "pos");
+    Array_dyn<Vec2>*  target_off  = opengl_buffer<Vec2> (&fonts->path, 1, "off");
+    Array_dyn<Vec2>*  target_size = opengl_buffer<Vec2> (&fonts->path, 2, "size");
+    Array_dyn<u32>*   target_path = opengl_buffer<u32>  (&fonts->path, 3, "p_base");
+    Array_dyn<Color>* target_fill = opengl_buffer<Color>(&fonts->path, 4, "fill");
 
     if (target_pos->size == 0) {
         array_append(target_pos, {
@@ -687,6 +753,7 @@ void font_frame_draw(Font_data* fonts, s64 screen_w, s64 screen_h) {
     array_resize(target_off,  fonts->type_counts[fonts->type_counts.size-1]);
     array_resize(target_size, fonts->type_counts[fonts->type_counts.size-1]);
     array_resize(target_path, fonts->type_counts[fonts->type_counts.size-1]);
+    array_resize(target_fill, fonts->type_counts[fonts->type_counts.size-1]);
 
     for (auto i: fonts->draw_glyphs) {
         Font_data::Glyph g = fonts->glyphs.data[i.glyph];
@@ -694,11 +761,13 @@ void font_frame_draw(Font_data* fonts, s64 screen_w, s64 screen_h) {
         (*target_off ).data[index0] = i.pos;
         (*target_size).data[index0] = i.scale;
         (*target_path).data[index0] = g.path0_beg;
+        (*target_fill).data[index0] = i.fill;
         if (g.type1 == 0) continue;
         s64 index1 = fonts->type_counts.data[g.type1-1]++;
         (*target_off ).data[index1] = i.pos;
         (*target_size).data[index1] = i.scale;
         (*target_path).data[index1] = g.path1_beg;
+        (*target_fill).data[index1] = i.fill;
     }
 
     for (auto wd: fonts->draw_words) {
@@ -719,6 +788,7 @@ void font_frame_draw(Font_data* fonts, s64 screen_w, s64 screen_h) {
                 (*target_off ).data[index + i] = tmp;
                 (*target_size).data[index + i] = {scale, scale};
                 (*target_path).data[index + i] = fonts->word_paths.data[path_index + i];
+                (*target_fill).data[index + i] = wd.fill;
             }
             path_index += size;
         }
@@ -738,6 +808,7 @@ void font_frame_draw(Font_data* fonts, s64 screen_w, s64 screen_h) {
         opengl_shader_attrib_divisor(&fonts->path, 1, "off",    len);
         opengl_shader_attrib_divisor(&fonts->path, 2, "size",   len);
         opengl_shader_attrib_divisor(&fonts->path, 3, "p_base", len);
+        opengl_shader_attrib_divisor(&fonts->path, 4, "fill",   len);
         opengl_uniform_set(&fonts->path, "p_length", (u32)len);
         opengl_shader_buffers_enable(&fonts->path, 0, offset);
         glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 6, count * len);
@@ -758,9 +829,7 @@ void font_frame_draw(Font_data* fonts, s64 screen_w, s64 screen_h) {
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     opengl_shader_use(&fonts->blend);
     opengl_uniform_set(&fonts->blend, "sampler", fonts->texture_unit - GL_TEXTURE0);
-    opengl_uniform_set4(&fonts->blend, "fill", black);
     opengl_shader_draw_and_clear(&fonts->blend, GL_TRIANGLE_STRIP);
-
 }
 
 
@@ -832,35 +901,6 @@ void font_fmt_end(Font_data* fonts, u64 flags) {
 }
 
 
-// Decode the first unicode codepoint in buf, return the number of bytes it is long. The result value of the codepoint is written into c_out.
-s64 _font_decode_utf8(Array_t<u8> buf, u32* c_out = nullptr) {
-    static bool warning_was_given;
-    
-    u32 c = buf[0];
-    s64 c_bytes = c&128 ? c&64 ? c&32 ? c&16 ? 4 : 3 : 2 : -1 : 1;
-    if (buf.size < c_bytes) c_bytes = -1;
-    
-    if (c_bytes == 1) {
-        // nothing
-    } else if (c_bytes == 2) {
-        c = (buf[0]&0x1f) << 6 | (buf[1]&0x3f);
-    } else if (c_bytes == 3) {
-        c = (buf[0]&0xf) << 12 | (buf[1]&0x3f) << 6 | (buf[2]&0x3f);
-    } else if (c_bytes == 4) {
-        c = (buf[0]&0x7) << 18 | (buf[1]&0x3f) << 12 | (buf[2]&0x3f) << 6 | (buf[3]&0x3f);
-    } else {
-        if (not warning_was_given) {
-            fprintf(stderr, "Warning: encountered invalid utf-8 sequence (this warning will not show again)\n");
-            warning_was_given = true;
-        }
-        assert(false);
-        c = '?';
-        c_bytes = 1;
-    }
-    if (c_out) *c_out = c;
-    return c_bytes;
-}
-
 void _font_utf8_to_codepoints(Array_t<u8> str, Array_dyn<u32>* into) {
     for (s64 i = 0; i < str.size;) {
         u32 c = -1;
@@ -926,7 +966,7 @@ void font_fmt_text(Font_data* fonts, u64 flags_add, Array_t<u8> str) {
 }
 
 void font_fmt_draw(
-    Font_data* fonts, s64 slot, Vec2 pos, float w, u8* fill=nullptr,
+    Font_data* fonts, s64 slot, Vec2 pos, float w, Color fill={0,0,0,255},
     float* x_out=nullptr, float* y_out=nullptr, bool only_measure=false, float* xw_out=nullptr
 ) {
     Array_t<Font_data::Text_box> boxes = hashmap_get(&fonts->text_slots, slot).boxes;
@@ -936,9 +976,7 @@ void font_fmt_draw(
     float orig_x = x, orig_y = y, max_x = x;
     if (w == -1) w = INFINITY;
 
-    u8 black[] = {  0,  0,   0, 255};
-    u8 red[]   = {112, 10,  19, 255};
-    if (not fill) fill = black;
+    Color red   {112, 10,  19, 255};
 
     {Font_data::Word w0 = fonts->words[boxes[0].word ^ Font_data::MAGIC_WORD];
     y += fonts->instances[w0.font_instance ^ Font_data::MAGIC_INSTANCES].ascent;}
@@ -980,10 +1018,10 @@ void font_fmt_draw(
         }
         max_x = std::max(x + group_w, max_x);
 
-        u8* box_fill = box.flags & Font_data::RED ? red : fill;
+        Color box_fill = box.flags & Font_data::RED ? red : fill;
 
         if (not only_measure) {
-            font_draw_word(fonts, box.word, Vec2 {x, y});
+            font_draw_word(fonts, box.word, Vec2 {x, y}, box_fill);
         }
         
         x += word.advance * font_inst.scale;

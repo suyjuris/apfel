@@ -5,14 +5,17 @@
 #include "platform_linux_autogen.cpp"
 #define PLATFORM_INCLUDES
 
-#include "gui.cpp"
+#include "bigtimer.cpp"
 
+#include <alloca.h>
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 #include <X11/extensions/Xrandr.h>
 #include <time.h>
 #include <locale.h>
 #include <sys/stat.h>
+#include <sys/file.h>
+#include <unistd.h>
 
 typedef GLXContext (*glXCreateContextAttribsARB_t) (
     Display *dpy, GLXFBConfig config, GLXContext share_context, Bool direct, const int *attrib_list
@@ -267,9 +270,159 @@ u64 platform_frame_count() {
     return global_platform.frame_count;
 }
 
+Array_dyn<u8> platform_error_buf;
 
-int platform_chmod(FILE* f, u32 mode) {
-    return fchmod(fileno(f), mode);
+void platform_error_print(Array_t<u8> prefix) {
+    s64 last = 0;
+    for (s64 i = 0; i < platform_error_buf.size; ++i) {
+        if (platform_error_buf[i] == '\n') {
+            fwrite(prefix.data, 1, prefix.size, stderr);
+            fputs(": ", stderr);
+            fwrite(&platform_error_buf[last], 1, i - last, stderr);
+            fputs("\n", stderr);
+            last = i+1;
+        }
+    }
+    platform_error_buf.size = 0;
+}
+
+void platform_error_clear() {
+    platform_error_buf.size = 0;
+}
+
+int platform_open_try(Array_t<u8> path, u64 flags, u32 mode, int* out_fd) {
+    using namespace Platform;
+    assert(not (flags & ~(OPEN_READ | OPEN_WRITE | OPEN_CREATE | OPEN_APPEND | OPEN_TRUNCATE)));
+    assert(out_fd);
+    
+    char* tmp = (char*)alloca(path.size + 1);
+    memcpy(tmp, path.data, path.size);
+    tmp[path.size] = 0;
+
+    int f = 0;
+    u64 flagsrw = flags & (OPEN_READ | OPEN_WRITE);
+    f |= flagsrw == (OPEN_READ | OPEN_WRITE) ? O_RDWR : 0;
+    f |= flagsrw == OPEN_READ ? O_RDONLY : 0;
+    f |= flagsrw == OPEN_WRITE ? O_WRONLY : 0;
+    assert(flagsrw);
+    
+    f |= flags & OPEN_CREATE ? O_CREAT : 0;
+    f |= flags & OPEN_APPEND ? O_APPEND : 0;
+    f |= flags & OPEN_TRUNCATE ? O_TRUNC : 0;
+    
+    int fd = open(tmp, f, (mode_t)mode);
+
+    if (fd == -1) {
+        platform_error_printf("$ while opening file '%s'\n", tmp);
+        return 1;
+    }
+
+    if (out_fd) *out_fd = fd;
+    return 0;
+}
+
+int platform_request_lock_try(int fd, bool* out_success) {
+    int code = flock(fd, LOCK_EX | LOCK_NB);
+
+    bool succ = true;
+    if (code) {
+        if (errno == EWOULDBLOCK) {
+            succ = false;
+        } else {
+            platform_error_printf("$ while trying to acquire lock\n");
+            return 1;
+        }
+    }
+    
+    if (out_success) *out_success = succ;
+    return 0;
+}
+
+int platform_write_try(int fd, Array_t<u8> buf) {
+    while (buf.size > 0) {
+        s64 bytes_written = write(fd, buf.data, buf.size);
+        if (bytes_written == -1) {
+            if (errno == EPIPE) {
+                array_printf(&platform_error_buf, "eof while writing bytes (%ld left to write)\n", (long)buf.size);
+                return Platform::WRITE_EOF;
+            } else {
+                bool wouldblock = errno == EWOULDBLOCK || errno == EAGAIN;
+                platform_error_printf("$ while calling write()");
+                return wouldblock ? Platform::WRITE_WOULDBLOCK : Platform::WRITE_ERROR;
+            }
+        }
+        assert(bytes_written > 0);
+        buf = array_subarray(buf, bytes_written, buf.size);
+    }
+
+    assert(buf.size == 0);
+    return 0;
+}
+
+int platform_read_try(int fd, Array_t<u8> buf) {
+    while (buf.size > 0) {
+        s64 bytes_read = read(fd, buf.data, buf.size);
+        if (bytes_read == -1) {
+            bool wouldblock = errno == EWOULDBLOCK || errno == EAGAIN;
+            platform_error_printf("$ while calling read()");
+            return wouldblock ? Platform::READ_WOULDBLOCK : Platform::READ_ERROR;
+        }
+        if (bytes_read == 0) {
+            /* Note that buf.size > 0 due to loop condition */
+            array_printf(&platform_error_buf, "unexpected eof (%ld bytes left to read)\n", (long)buf.size);
+            return Platform::READ_EOF;
+        }
+        buf = array_subarray(buf, bytes_read, buf.size);
+    }
+    
+    assert(buf.size == 0);
+    return 0;
+}
+
+int platform_seek_try(int fd, u64 offset, u8 whence, u64* out_offset) {
+    int w = SEEK_SET;
+    switch (whence) {
+    case Platform::P_SEEK_SET: w = SEEK_SET; break;
+    case Platform::P_SEEK_CUR: w = SEEK_CUR; break;
+    case Platform::P_SEEK_END: w = SEEK_END; break;
+    default: assert(false);
+    }
+    
+    off_t r = lseek(fd, offset, w);
+    if (r == (off_t)-1) {
+        platform_error_printf("$ while calling lseek()");
+        return 1;
+    }
+    
+    if (out_offset) *out_offset = r;
+    return 0;
+}
+
+int platform_truncate_try(int fd, u64 size) {
+    int code = ftruncate(fd, size);
+    if (code) {
+        platform_error_printf("$ while calling ftruncate()");
+        return 1;
+    }
+    return 0;
+}
+
+int platform_close_try(int fd) {
+    int code = close(fd);
+    if (code) {
+        platform_error_printf("$ while calling close()\n");
+        return 1;
+    }
+    return 0;
+}
+
+int platform_chmod_try(int fd, u32 mode) {
+    int code = fchmod(fd, mode);
+    if (code) {
+        platform_error_printf("$ while calling fchmod()\n");
+        return 1;
+    }
+    return 0;
 }
 
 void _platform_init(Platform_state* platform) {
@@ -405,7 +558,7 @@ int main(int argc, char** argv) {
     XSetWindowAttributes window_attrs = {};
     window_attrs.colormap = XCreateColormap(display, DefaultRootWindow(display), visual->visual, AllocNone); // Apparently you need the colormap, else XCreateWindow gives a BadMatch error. No worries, this fact features prominently in the documentation and it was no bother at all.
     window_attrs.event_mask = ExposureMask | KeyPressMask | KeyReleaseMask | ButtonPressMask
-        | ButtonReleaseMask | StructureNotifyMask | PointerMotionMask | FocusChangeMask;
+        | ButtonReleaseMask | StructureNotifyMask /*| PointerMotionMask*/ | FocusChangeMask;
 
     Window window = XCreateWindow(display, DefaultRootWindow(display), 0, 0, 1300, 800, 0,
         visual->depth, InputOutput, visual->visual, CWColormap | CWEventMask, &window_attrs); // We pass a type of InputOutput explicitly, as visual->c_class is an illegal value for some reason. A good reason, I hope.

@@ -69,6 +69,38 @@ struct Mat2 {
 // Only as data
 struct Vec3 { float x = 0.f, y = 0.f, z = 0.f; };
 struct Vec4 { float x = 0.f, y = 0.f, z = 0.f, w = 0.f; };
+struct Color { u8 r = 0, g = 0, b = 0, a = 255; };
+Color lerp(Color a, Color b, float t) {
+    float u = 1.f - t;
+    return {(u8)(a.r*u+b.r*t), (u8)(a.g*u+b.g*t), (u8)(a.b*u+b.b*t), (u8)(a.a*u+b.a*t)};
+}
+
+namespace Palette {
+constexpr Color BLACK {0, 0, 0};
+constexpr Color GREY {100, 100, 100};
+constexpr Color WHITE {255, 255, 255};
+constexpr Color BG {246, 240, 228};
+constexpr Color RED {127, 10, 19};
+constexpr Color BGRED {242, 231, 232};
+constexpr Color BLUE {16, 67, 84};
+constexpr Color BGBLUE {232, 237, 238};
+constexpr Color GREEN {33, 117, 22};
+constexpr Color BGGREEN {233, 241, 232};
+constexpr Color PURPLE {136, 75, 171};
+constexpr Color BGPURPLE {243, 237, 247};
+constexpr Color ORANGE {210, 124, 17};
+constexpr Color BGORANGE {251, 242, 232};
+constexpr Color PINK {233, 95, 159};
+constexpr Color BGPINK {253, 239, 246};
+constexpr Color REDLIGHT {201, 136, 141};
+constexpr Color BLUELIGHT {120, 164, 184};
+constexpr Color GREENLIGHT {118, 222, 104};
+constexpr Color PURPLELIGHT {188, 135, 219};
+constexpr Color REDBRIGHT {189, 3, 16};
+constexpr Color BGREDBRIGHT {249, 230, 232};
+constexpr Color BLUEBRIGHT {25, 123, 155};
+constexpr Color BGBLUEBRIGHT {232, 242, 245};
+}
 
 struct Shader_var {
     s64 name_beg, name_end;
@@ -79,24 +111,33 @@ struct Shader_buffer {
     enum Buffer_type: u8 {
         BTYPE_NONE = 0, BTYPE_float, BTYPE_s32, BTYPE_u32, BTYPE_u8,
         BTYPE_Vec2, BTYPE_Vec3, BTYPE_Vec4,
+        BTYPE_Color,
         BTYPE_COUNT
     };
     static constexpr s64 btype_size[BTYPE_COUNT] = {
         (u32)-1, sizeof(float), sizeof(s32), sizeof(u32), sizeof(u8),
-        sizeof(Vec2), sizeof(Vec3), sizeof(Vec4)
+        sizeof(Vec2), sizeof(Vec3), sizeof(Vec4),
+        sizeof(Color)
     };
     static constexpr u32 btype_type[BTYPE_COUNT] = {
         (u32)-1, GL_FLOAT, GL_INT, GL_UNSIGNED_INT, GL_UNSIGNED_BYTE,
-        GL_FLOAT, GL_FLOAT, GL_FLOAT
+        GL_FLOAT, GL_FLOAT, GL_FLOAT,
+        GL_UNSIGNED_BYTE,
     };
     static constexpr bool btype_norm[BTYPE_COUNT] = {
-        false, false, false, false, true, false, false, false
+        false, false, false, false, true,
+        false, false, false,
+        true
     };
     static constexpr char const* btype_name[BTYPE_COUNT] = {
-        "none", "float", "s32", "u32", "u8", "Vec2", "Vec3", "Vec4"
+        "none", "float", "s32", "u32", "u8",
+        "Vec2", "Vec3", "Vec4",
+        "Color"
     };
     static constexpr s64 btype_mult[BTYPE_COUNT] = {
-        -1, 1, 1, 1, 1, 2, 3, 4
+        -1, 1, 1, 1, 1,
+        2, 3, 4,
+        4
     };
     
     Array_dyn<u8> data;
@@ -117,6 +158,7 @@ template <> u8 Shader_buffer_btype_value<u8>    = Shader_buffer::BTYPE_u8;
 template <> u8 Shader_buffer_btype_value<Vec2>  = Shader_buffer::BTYPE_Vec2;
 template <> u8 Shader_buffer_btype_value<Vec3>  = Shader_buffer::BTYPE_Vec3;
 template <> u8 Shader_buffer_btype_value<Vec4>  = Shader_buffer::BTYPE_Vec4;
+template <> u8 Shader_buffer_btype_value<Color> = Shader_buffer::BTYPE_Color;
 
 struct Shader {
     // These have to match!
@@ -860,4 +902,8 @@ void opengl_shader_draw_and_clear(Shader* shader, u32 primitive, bool use_indice
 void opengl_shader_drawinst_and_clear(Shader* shader, u32 primitive, s64 inst_count) {
     opengl_shader_drawinst(shader, primitive, inst_count);
     opengl_shader_clear(shader);
+}
+
+void opengl_clear_color(Color col) {
+    glClearColor(col.r/255.f, col.g/255.f, col.b/255.f, col.a/255.f);
 }
