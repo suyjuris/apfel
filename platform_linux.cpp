@@ -5,7 +5,7 @@
 #include "platform_linux_autogen.cpp"
 #define PLATFORM_INCLUDES
 
-#include "bigtimer.cpp"
+#include "gui.cpp"
 
 #include <alloca.h>
 #include <X11/Xlib.h>

@@ -75,10 +75,15 @@ void application_render(Application* context) {
     }
     context->input_queue.size = 0;
 
-    opengl_clear_color(Palette::BG);
     
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    
+    opengl_clear_color(Palette::BG);
     glClear(GL_COLOR_BUFFER_BIT);
     glClear(GL_DEPTH_BUFFER_BIT);
+    
+    font_frame_draw(&context->fonts, context->screen_w, context->screen_h);
 }
 
 

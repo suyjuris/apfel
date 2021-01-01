@@ -1,6 +1,6 @@
 #!/bin/bash
 
-GXX=g++
+GXX=g++-8
 CXXFLAGS="-fmax-errors=2 -Wall -Wextra -Wno-class-memaccess -Wno-sign-conversion -Wno-unused-variable -Wno-sign-compare -Wno-write-strings -Wno-unused-parameter -Wno-comment -std=c++14 -fno-exceptions -fno-rtti"
 LDFLAGS="-lGL -lX11 -lXrandr"
 LIBPROFILER=/usr/local/lib/libprofiler.so

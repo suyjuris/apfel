@@ -382,8 +382,8 @@ void sat_rewrite_basic(Sat_instance* inst, u64 op, Array_t<u64> args) {
             s64 len = max(into_arr.size, from_arr.size);
             for (s64 i = 0; i < len; ++i) {
                 // @copypaste 8w4uf98shd
-                u64 lit0 = i < from_arr.size ? from_arr[i] : var_false;
-                u64 lit1 = i < into_arr.size ? into_arr[i] : var_false;
+                u64 lit0 = i < from_arr.size ? from_arr[i] : (u64)var_false;
+                u64 lit1 = i < into_arr.size ? into_arr[i] : (u64)var_false;
                 sat_add(inst, equivalent, {lit0, lit1});
             }
         } else {
