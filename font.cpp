@@ -82,6 +82,8 @@ struct Font_data {
     Hashmap<Glyph_handle> codepoint_indices;
     Array_t<Glyph_handle> ascii_indices;
 
+    float z_level = 0.f;
+
     struct Draw_word {
         u32 word;
         Vec2 pos;
@@ -173,16 +175,16 @@ struct Font_data {
         sense.y = (dat1.z == 0 || dat1.z == 2) ? -1.0 : 1.0;
         sense.z = dat1.w;
         
-        vec2 sp0  = (p0 * size + off);
-        vec2 sp1  = (p1 * size + off);
-        vec2 sp2  = (p2 * size + off);
-        float sy  = sense.z * size.y + off.y;
+        vec2 sp0  = p0 * size; // + off
+        vec2 sp1  = p1 * size; // + off
+        vec2 sp2  = p2 * size; // + off
+        float sy  = sense.z * size.y; // + off.y
         float sy1 = sense.y > 0 ? min(min(sp0.y, sp1.y), sp2.y)
-                                : max(max(sp0.y, sp1.y), sp2.y);
+                                : max(max(sp0.y, sp1.y), sp2.y);  // + off
         vec2 spos = vec2( mix(sp0.x-0.5, sp2.x+0.5, pos.x),
-                          mix(sy, sy1-0.5*sense.y, pos.y) );
+                          mix(sy, sy1-0.5*sense.y, pos.y) ); // + off
 
-        gl_Position = vec4((spos - origin)*scale, vec2(0.05, 1));
+        gl_Position = vec4((spos + (off - origin))*scale, vec2(0.05, 1));
 
         v_pos = spos-sp0;
         v_p1 = sp1-sp0;
@@ -242,11 +244,12 @@ struct Font_data {
 #ifdef ASSET_font_blend_v
     #version 150 core
     in vec2 pos;
+    uniform float z;
     out vec2 v_tpos;
     
     void main() {
         v_tpos = (pos + vec2(1.0, 1.0)) / 2.0;
-        gl_Position = vec4(pos, vec2(0.05, 1));
+        gl_Position = vec4(pos, vec2(z, 1));
     }
 #endif
 
@@ -309,6 +312,8 @@ void font_init(Font_data* fonts, Asset_store* assets, u32 texture_unit) {
     glBufferData(GL_TEXTURE_BUFFER, 65536 * 16, nullptr, GL_DYNAMIC_DRAW);
     glBindTexture(GL_TEXTURE_BUFFER, fonts->tex_glyphs);
     glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, fonts->tex_glyphs_buf);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
 s64 font_add(Font_data* fonts, Array_t<u8> data) {
@@ -347,7 +352,7 @@ void font_instance_scale(Font_data* fonts, s64 font_inst, float size) {
     _font_instance_init(fonts, font_inst ^ Font_data::MAGIC_INSTANCES, -1, size);
 }
 
-s64 font_instantiate(Font_data* fonts, s64 font_info, float size) {
+s64 font_instantiate(Font_data* fonts, s64 font_info, float size = 10.f) {
     s64 font_inst = fonts->instances.size;
     array_append_zero(&fonts->instances, 1);
     _font_instance_init(fonts, font_inst, font_info ^ Font_data::MAGIC_INFOS, size);
@@ -375,6 +380,10 @@ void font_instance_scale_defaults(Font_data* fonts, float scale) {
     font_instance_scale(fonts, Font_data::FONT_HEADER, scale * 26.f);
     font_instance_scale(fonts, Font_data::FONT_SMALL,  scale * 15.f);
     font_instance_scale(fonts, Font_data::FONT_BUTTON, scale * 16.7f);
+}
+
+Font_data::Font_instance font_instance_get(Font_data* fonts, s64 font) {
+    return fonts->instances[font ^ Font_data::MAGIC_INSTANCES];
 }
 
 void _font_outline_load(stbtt_fontinfo* font_info, int codepoint, Font_data::Outline* outline) {
@@ -828,6 +837,7 @@ void font_frame_draw(Font_data* fonts, s64 screen_w, s64 screen_h) {
     
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     opengl_shader_use(&fonts->blend);
+    opengl_uniform_set(&fonts->blend, "z", fonts->z_level);
     opengl_uniform_set(&fonts->blend, "sampler", fonts->texture_unit - GL_TEXTURE0);
     opengl_shader_draw_and_clear(&fonts->blend, GL_TRIANGLE_STRIP);
 }

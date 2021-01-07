@@ -173,6 +173,13 @@ T* hashmap_getcreate(Hashmap<T>* map, u64 key, T init={}) {
     return &map->slots[slot].val;
 }
 
+template <typename T>
+void hashmap_clear(Hashmap<T>* map) {
+    for (s64 i = 0; i < map->slots.size; ++i) {
+        map->slots[i].key = map->empty;
+    }
+}
+
 static inline u64 _hash_rotate_left(u64 x, int k) {
 	return (x << k) | (x >> (64 - k));
 }
@@ -201,6 +208,12 @@ u64 hash_str(Array_t<u8> str) {
         x ^= str.data[j] << 8*j;
     }
     return hash_u64(x);
+}
+
+u64 hash_arr(Array_t<u64> arr) {
+    u64 x = 0xffdf38dd3e69bd91ull ^ arr.size;
+    for (u64 a: arr) x = hash_u64(a ^ x);
+    return x;
 }
 
 #ifdef HASHMAP_TEST

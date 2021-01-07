@@ -611,7 +611,7 @@ int main(int argc, char** argv) {
 
     clock_gettime(CLOCK_MONOTONIC_RAW, &global_platform.t_start);
     global_platform.now = 0;
-    
+
     while (true) {
         bool redraw = false;
         if (XPending(display) <= 0) {

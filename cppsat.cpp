@@ -2,14 +2,17 @@
 struct Sat_instance {
     Array_dyn<s64> clause_offsets;
     Array_dyn<u64> clause_literals;
-    
+    Array_dyn<u64> clause_constraint;
+
     Array_dyn<s64> context_offsets;
-    Array_dyn<u64> context_literals;
+    Array_dyn<u64> context_data;
+    Array_dyn<s64> context_stack;
     
     Array_dyn<s64> constraint_offsets;
     Array_dyn<u64> constraint_data;
     Array_dyn<s64> constraint_parent; // -1 if no parent
     Array_dyn<s64> constraint_parent_stack;
+    Array_dyn<s64> constraint_context;
 
     Array_dyn<s64> group_offsets;
     Array_dyn<u64> group_literals;
@@ -31,7 +34,8 @@ struct Sat_instance {
 
     Hashmap<s64> params;
 
-    u64 debug_forbidden_id = 0;
+    u64 debug_forbidden_id = 0x10ull << 56;
+    bool debug_explain_vars_raw = false;
 };
 
 namespace Sat {
@@ -242,22 +246,26 @@ void sat_rewrite_basic(Sat_instance* inst, u64 op, Array_t<u64> args) {
     using namespace Sat;
     switch (op) {
         
-    case clause:
-        array_append(&inst->clause_literals, inst->context_literals);
+    case clause: {
+        auto context = array_subindex(inst->context_offsets, inst->context_data, inst->context_stack.back());
+        array_append(&inst->clause_literals, context);
         sat_expand_recursive(inst, args, &inst->clause_literals);
+        array_push_back(&inst->clause_constraint, inst->constraint_parent_stack.back());
         array_push_back(&inst->clause_offsets, inst->clause_literals.size);
-        break;
+    } break;
 
-    case clause_noexpand:
+    case clause_noexpand: {
         for (u64 lit: args) {
             u64 type;
             sat_decompose(lit, &type);
             assert(type == VAR);
         }
-        array_append(&inst->clause_literals, inst->context_literals);
+        auto context = array_subindex(inst->context_offsets, inst->context_data, inst->context_stack.back());
+        array_append(&inst->clause_literals, context);
         array_append(&inst->clause_literals, args);
+        array_push_back(&inst->clause_constraint, inst->constraint_parent_stack.back());
         array_push_back(&inst->clause_offsets, inst->clause_literals.size);
-        break;
+    } break;
 
     case at_most_one: {
         auto lits = sat_expand_recursive(inst, args, &inst->rewrite_temp);
@@ -410,7 +418,7 @@ void sat_add(Sat_instance* inst, u64 op, Array_t<u64> args) {
     s64 prev = inst->rewrite_temp.size;
     defer { inst->rewrite_temp.size = prev; };
     
-    s64 prev_context = inst->context_literals.size;
+    s64 prev_context = inst->context_stack.size;
 
     array_push_back(&inst->constraint_data, op);
     array_append(&inst->constraint_data, args);
@@ -421,13 +429,15 @@ void sat_add(Sat_instance* inst, u64 op, Array_t<u64> args) {
     array_push_back(&inst->constraint_parent_stack, index);
     defer { --inst->constraint_parent_stack.size; };
 
+    array_push_back(&inst->constraint_context, inst->context_stack.back());
+
     auto args_copy = array_subindex(inst->constraint_offsets, inst->constraint_data, index);
     args_copy = array_subarray(args_copy, 1, args_copy.size);
 
     s64 func_index = ((subtype - Sat::CONSTRAINT) >> 56) - 1;
     (*inst->rewrite_funcs[func_index])(inst, op, args_copy);
 
-    assert(inst->context_literals.size == prev_context);
+    assert(inst->context_stack.size == prev_context);
 }
 
 void sat_explain(Sat_instance* inst, u64 id, Array_dyn<u8>* into);
@@ -474,10 +484,16 @@ void sat_explain(Sat_instance* inst, u64 id, Array_t<u64> args, Array_dyn<u8>* i
         id_mod = id ^ mask;
     }
 
+
     s64 off = inst->explain_temp.size;
     defer { inst->explain_temp.size = off; };
         
     Sat_instance::Explain_func* func = hashmap_getptr(&inst->explain_funcs, subtype);
+
+    if (type == VAR and inst->debug_explain_vars_raw) {
+        func = nullptr;
+    }
+
     bool done = func
         ? (*func)(inst, id_mod, args, into)
         : sat_explain_undefined(inst, id_mod, args, into);
@@ -519,6 +535,19 @@ void sat_explain(Sat_instance* inst, u64 id, Array_dyn<u8>* into) {
     } else {
         assert(false);
     }
+}
+
+void sat_explain_constraint(Sat_instance* inst, s64 index, Array_dyn<u8>* into) {
+    auto context = array_subindex(inst->context_offsets, inst->context_data, inst->constraint_context[index]);
+
+    if (context.size) {
+        array_printf(into, "{");
+        _sat_explain_print_joined(inst, context, ", ", into);
+        array_printf(into, "} ");
+    }
+
+    auto data = array_subindex(inst->constraint_offsets, inst->constraint_data, index);
+    sat_explain(inst, data[0], array_subarray(data, 1), into);
 }
 
 bool sat_explain_basic(Sat_instance* inst, u64 id, Array_t<u64> args, Array_dyn<u8>* into) {
@@ -594,18 +623,19 @@ bool sat_explain_basic(Sat_instance* inst, u64 id, Array_t<u64> args, Array_dyn<
 }
     
 void sat_push(Sat_instance* inst, Array_t<u64> condition) {
-    array_append(&inst->context_literals, condition);
-    assert(inst->context_literals.size != 4);
-    array_push_back(&inst->context_offsets, inst->context_literals.size);
+    auto cur = array_subindex(inst->context_offsets, inst->context_data, inst->context_stack.back());
+    array_append(&inst->context_data, cur);
+    array_append(&inst->context_data, condition);
+    array_push_back(&inst->context_stack, inst->context_offsets.size-1);
+    array_push_back(&inst->context_offsets, inst->context_data.size);
 }
 void sat_push_amend(Sat_instance* inst, u64 condition_lit) {
-    array_push_back(&inst->context_literals, condition_lit);
+    array_push_back(&inst->context_data, condition_lit);
     ++inst->context_offsets.back();
 }
 
 void sat_pop(Sat_instance* inst) {
-    --inst->context_offsets.size;
-    inst->context_literals.size = inst->context_offsets.back();
+    --inst->context_stack.size;
 }
 
 void sat_push_add_pop(Sat_instance* inst, Array_t<u64> condition, u64 op, Array_t<u64> args) {
@@ -616,7 +646,8 @@ void sat_push_add_pop(Sat_instance* inst, Array_t<u64> condition, u64 op, Array_
 
 void sat_init(Sat_instance* inst) {
     array_push_back(&inst->clause_offsets, 0ll);
-    array_push_back(&inst->context_offsets, 0ll);
+    array_append(&inst->context_offsets, {0ll, 0ll}); // One empty context in front
+    array_push_back(&inst->context_stack, 0ll);
     array_push_back(&inst->constraint_offsets, 0ll);
     array_push_back(&inst->constraint_parent_stack, -1ll);
     array_push_back(&inst->group_offsets, 0ll);
@@ -688,7 +719,6 @@ void sat_write_human(Sat_instance* inst, Array_dyn<u8>* into) {
     defer { array_free(&parent_stack); };
     
     for (s64 i = 0; i < inst->constraint_parent.size; ++i) {
-        Array_t<u64> data = array_subindex(inst->constraint_offsets, inst->constraint_data, i);
         s64 parent = inst->constraint_parent[i];
 
         while (parent_stack.size and parent_stack.back() != parent) {
@@ -700,9 +730,114 @@ void sat_write_human(Sat_instance* inst, Array_dyn<u8>* into) {
             array_push_back(into, (u8)' ');
         }
         
-        sat_explain(inst, data[0], array_subarray(data, 1), into);
+        sat_explain_constraint(inst, i, into);
         array_push_back(into, (u8)'\n');
     }
+}
+
+struct Sat_solution {
+    enum Literal_values: u8 {
+        L_UNASSIGNED, L_FALSE, L_TRUE
+    };
+
+    Sat_instance* inst;
+    Hashmap<bool> values;
+
+    u8 get(u64 lit) {
+        bool isneg = lit >> 63;
+        if (bool* val = hashmap_getptr(&values, lit^-isneg)) {
+            return *val ^ isneg ? L_TRUE : L_FALSE;
+        } else {
+            return L_UNASSIGNED;
+        }
+    }
+    void set(u64 lit) {
+        bool isneg = lit >> 63;
+        hashmap_set(&values, lit^-isneg, isneg ? false : true);
+    }
+    bool istrue (u64 lit) { return get(lit) == L_TRUE;  }
+    bool isfalse(u64 lit) { return get(lit) == L_FALSE; }
+    bool operator[] (u64 lit) {
+        switch (get(lit)) {
+        case L_FALSE: return false;
+        case L_TRUE:  return true;
+        default: assert(false); return false;
+        }
+    }
+};
+
+struct Sat_propagation {
+    u64 lit; s64 clause;
+};
+
+Sat_solution sat_solution_from_instance(
+    Sat_instance* inst, Array_dyn<s64>* out_offsets = nullptr, Array_dyn<Sat_propagation>* out_props = nullptr
+) {
+    if (out_offsets or out_props) {
+        assert(out_offsets and out_props);
+        if (out_offsets->size == 0) {
+            array_push_back(out_offsets, out_props->size);
+        }
+    }
+    
+    Sat_solution sol;
+    sol.inst = inst;
+
+    Array_dyn<s64> clauses, mark_for_entry;
+    array_reserve(&clauses, inst->clause_offsets.size-1);
+    defer { array_free(&clauses); };
+    defer { array_free(&mark_for_entry); };
+    for (s64 i = 0; i+1 < inst->clause_offsets.size; ++i) {
+        array_push_back(&clauses, i);
+    }
+
+    bool dirty = true;
+    while (dirty) {
+        dirty = false;
+        s64 i_out = 0;
+        for (s64 i: clauses) {
+            auto clause = array_subindex(inst->clause_offsets, inst->clause_literals, i);
+
+            bool retain = false;
+            u64 prop = 0;
+            bool flag = false;
+            for (u64 lit: clause) {
+                switch (sol.get(lit)) {
+                case Sat_solution::L_FALSE: continue;
+                case Sat_solution::L_TRUE: prop = 0; break;
+                case Sat_solution::L_UNASSIGNED: {
+                    if (prop) {
+                        prop = 0;
+                        retain = true;
+                        flag = true;
+                        break;
+                    }
+                    prop = lit;
+                    break;
+                };
+                default: assert(false);
+                }
+                if (flag) break;
+            }
+
+            if (prop) {
+                array_push_back(&mark_for_entry, prop);
+                if (out_props) array_push_back(out_props, {prop, i});
+                dirty = true;
+            }
+            if (retain) {
+                clauses[i_out++] = i;
+            }
+        }
+        clauses.size = i_out;
+
+        for (u64 prop: mark_for_entry) sol.set(prop);
+        mark_for_entry.size = 0;
+        
+        if (out_offsets and dirty) array_push_back(out_offsets, out_props->size);
+    }
+    
+    return sol;
 }
 
 namespace Sat {
@@ -1451,7 +1586,15 @@ bool factorio_explain(Sat_instance* inst, u64 id, Array_t<u64> args, Array_dyn<u
             }
         } else if (fvar_type == Field::FVAR_LINEEL) {
             assert(has_coords);
-            array_printf(into, "(%lld,%lld).lines%s[%lld][%lld]", x, y, mod_suf, val, val2);
+            array_printf(into, "(%lld,%lld).lines%s[", x, y, mod_suf);
+            if (val2 == 0xfe) {
+                array_printf(into, "sum");
+            } else if (val2 == 0xff) {
+                array_printf(into, "block");
+            } else {
+                array_printf(into, "%lld", val2);
+            }
+            array_printf(into, "][%lld]", val-1);
         } else if (fvar_type == Field::FVAR_DIR) {
             u8 dir = (id & Dir::FVAR_DIR_MASK) >> 16;
 
@@ -1561,7 +1704,7 @@ void factorio_add_fields(Sat_instance* inst, Array_t<s64> params, Array_t<s64> y
         sat_add(inst, field_border_unary, {(u64)-1, (u64)yoff_output[i], Field::BORDER_OUT, (u64)i});
     }
     for (s64 y: yoff_input) {
-        sat_add(inst, field_border_unary, {(u64)-1, (u64)y, Field::BORDER_INP});        
+        sat_add(inst, field_border_unary, {(u64)nx, (u64)y, Field::BORDER_INP});        
     }
 }
 
@@ -1593,3 +1736,5 @@ void factorio_balancer(Sat_instance* inst, Factorio_params params) {
 
     factorio_add_fields(inst, arr, params.yoff_output, params.yoff_input);
 }
+
+

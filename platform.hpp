@@ -29,7 +29,11 @@ struct Key {
     enum Mouse_action: u8 {
         // Only the *_DOWN values can be queried
         LEFT_DOWN, LEFT_UP, RIGHT_DOWN, RIGHT_UP, MIDDLE_DOWN, MIDDLE_UP, MOTION,
-        SCROLL_DOWNWARDS, SCROLL_UPWARDS
+        SCROLL_DOWNWARDS, SCROLL_UPWARDS, MOUSE_COUNT
+    };
+    static constexpr char const* key_mouse_names[] = {
+        "left_down", "left_up", "right_down", "right_up", "middle_down", "middle_up", "motion",
+        "scroll_downwards", "scroll_upwards"
     };
 
     enum General_type: u8 {
@@ -87,6 +91,7 @@ struct Key {
 };
 
 constexpr char const* Key::key_special_names[];
+constexpr char const* Key::key_mouse_names[];
 
 void key_print(Key key) {
     if (key.type == Key::NONE) {
@@ -96,6 +101,11 @@ void key_print(Key key) {
     } else if (key.type == Key::SPECIAL) {
         assert(key.special < Key::SPECIAL_COUNT);
         printf("{%s}", Key::key_special_names[key.special]);
+    } else if (key.type == Key::MOUSE) {
+        u8 action; s64 x, y;
+        key.get_mouse_param(&action, &x, &y);
+        assert(action < Key::SPECIAL_COUNT);
+        printf("{%s, %lld, %lld}", Key::key_mouse_names[action], x, y);
     } else {
         assert(false);
     }

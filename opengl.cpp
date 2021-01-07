@@ -79,6 +79,7 @@ namespace Palette {
 constexpr Color BLACK {0, 0, 0};
 constexpr Color GREY {100, 100, 100};
 constexpr Color WHITE {255, 255, 255};
+constexpr Color NONE {0, 0, 0, 0};
 constexpr Color BG {246, 240, 228};
 constexpr Color RED {127, 10, 19};
 constexpr Color BGRED {242, 231, 232};
@@ -142,7 +143,7 @@ struct Shader_buffer {
     
     Array_dyn<u8> data;
     u8 btype;
-    bool instanced;
+    s32 divisor;
 };
 constexpr s64  Shader_buffer::btype_size[];
 constexpr u32  Shader_buffer::btype_type[];
@@ -717,8 +718,7 @@ void opengl_buffer_append_multi(
 
 void opengl_shader_attrib_divisor(Shader* shader, s64 index, char const* name, s64 divisor) {
     _opengl_buffer_helper2(shader, index, name);
-    shader->buffers[index+1].instanced = divisor != 0;
-    glVertexAttribDivisor(index, divisor);
+    shader->buffers[index+1].divisor = divisor;
 }
 
 s32 _opengl_uniform_set_helper(Shader* shader, char const* name) {
@@ -837,7 +837,8 @@ void opengl_shader_buffers_enable(Shader* shader, s64 vertex_offset=0, s64 inst_
         u32 typ = Shader_buffer::btype_type[buf.btype];
         s64 nor = Shader_buffer::btype_norm[buf.btype];
         s64 mult = Shader::type_mult[shader->attribs[i].type];
-        s64 off = siz * (buf.instanced ? inst_offset : vertex_offset);
+        s64 off = siz * (buf.divisor ? inst_offset : vertex_offset);
+    
         glBindBuffer(GL_ARRAY_BUFFER, shader->id_buffers[i]);
         u8 conv = Shader::type_conv[shader->attribs[i].type];
         if (conv == 0) {
@@ -850,6 +851,7 @@ void opengl_shader_buffers_enable(Shader* shader, s64 vertex_offset=0, s64 inst_
             assert(false);
         }
         glEnableVertexAttribArray(shader->loc_attribs[i]);
+        glVertexAttribDivisor(shader->loc_attribs[i], buf.divisor);
     }
 }
 
@@ -907,3 +909,4 @@ void opengl_shader_drawinst_and_clear(Shader* shader, u32 primitive, s64 inst_co
 void opengl_clear_color(Color col) {
     glClearColor(col.r/255.f, col.g/255.f, col.b/255.f, col.a/255.f);
 }
+

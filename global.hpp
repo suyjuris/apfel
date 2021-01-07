@@ -311,6 +311,12 @@ bool array_equal(Array_t<T> a, Array_t<T> b) {
 bool array_equal_str(Array_t<u8> a, char const* str) {
     return a.size == (s64)strlen(str) and memcmp(a.data, str, a.size) == 0;
 }
+template <typename T>
+int array_cmp(Array_t<T> a, Array_t<T> b) {
+    s64 size = min(a.size, b.size);
+    s64 cmp = memcmp(a.data, b.data, a.size * sizeof(T));
+    return cmp ? cmp : (a.size > b.size) - (a.size < b.size);
+}
 
 template <typename T> void array_swap(Array_t  <T>* a, Array_t  <T>* b) { simple_swap(a, b); }
 template <typename T> void array_swap(Array_dyn<T>* a, Array_dyn<T>* b) { simple_swap(a, b); }
