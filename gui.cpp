@@ -49,6 +49,7 @@ struct Application {
         CLICK_RECT_CLICKED = 1,
         CLICK_RECT_CLICKED_TOGGLE = 4,
         CLICK_RECT_DEAD = 2,
+        CLICK_RECT_CLICKED_RIGHT = 8,
     };
     
     struct Click_rect {
@@ -381,7 +382,7 @@ void application_init(Application* context) {
     context->sat_sol = sat_solution_from_instance(
         &context->sat_inst, &context->sat_sol_anim_indices, &context->sat_sol_anim_data
     );
-    context->sat_sol_anim_frame = context->sat_sol_anim_indices.size - 1;
+    context->sat_sol_anim_frame = 0;
 
     Array_dyn<u8> text_temp;
     defer { array_free(&text_temp); };
@@ -395,6 +396,12 @@ void application_init(Application* context) {
             return array_cmp(array_subarray(text_temp, 0, index), array_subarray(text_temp, index)) < 0;
         });
     }
+    
+    {Array_dyn<u8> human;
+    sat_write_human(&context->sat_inst, &human);
+    FILE* f = fopen("human.out", "w");
+    fwrite(human.data, 1, human.size, f);
+    fclose(f);}
     
     // Initialise the fonts
     font_init(&context->fonts, &context->assets, GL_TEXTURE2);
@@ -438,9 +445,11 @@ void application_render(Application* context) {
                 if (r.z <= best_z) { best_z = r.z; best_r = &r; }
             }
 
-            if (action == Key::LEFT_DOWN && best_r) {
+            if (best_r and action == Key::LEFT_DOWN) {
                 best_r->flags |= Application::CLICK_RECT_CLICKED;
                 best_r->flags ^= Application::CLICK_RECT_CLICKED_TOGGLE;
+            } else if (best_r and action == Key::RIGHT_DOWN) {
+                best_r->flags |= Application::CLICK_RECT_CLICKED_RIGHT;
             }
         } else if (i.type == Key::SPECIAL and i.special == Key::F4) {
             context->sat_inst.debug_explain_vars_raw ^= true;
@@ -497,11 +506,11 @@ void application_render(Application* context) {
                 string_temp.size = 0;
                 sat_explain(context->sat_sol.inst, i.lit, &string_temp);
 
-                Vec2 rect_p = {pos.x, pos.y - font_sans.newline};
-                Vec2 rect_size = {0.f, font_sans.newline};
+                Vec2 rect_p = {pos.x, pos.y - font_sans.ascent};
+                Vec2 rect_size = {0.f, font_sans.height};
                 font_metrics_string_get(&context->fonts, context->font_sans, string_temp, &rect_size.x);
 
-                u8 flags = application_clickable(context, "lit_detail"_arr, {i.lit}, rect_p, rect_size, 0.1f);
+                u8 flags = application_clickable(context, "lit_detail"_arr, {i.lit, (u64)i.clause}, rect_p, rect_size, 0.1f);
 
                 Color c = flags & Application::CLICK_RECT_CLICKED_TOGGLE ? Palette::RED : base;
 
@@ -509,6 +518,10 @@ void application_render(Application* context) {
                 {float x;
                 font_draw_string(&context->fonts, context->font_sans, string_temp, pos, c, &x, &pos.y);
                 if (next_x < x) next_x = x;}
+
+                if (not context->sat_sol[i.lit]) {
+                    shape_rectangle(&context->shapes, rect_p, rect_size, Palette::BGRED);
+                }
 
                 if (flags & Application::CLICK_RECT_CLICKED_TOGGLE) {
                     u64 constraint = context->sat_sol.inst->clause_constraint[i.clause];
@@ -526,6 +539,11 @@ void application_render(Application* context) {
 
                         constraint = context->sat_sol.inst->constraint_parent[constraint];
                     }
+                }
+                if (flags & Application::CLICK_RECT_CLICKED_RIGHT) {
+                    string_temp.size = 0;
+                    array_printf(&string_temp, "0x%llx", i.lit);
+                    platform_clipboard_set(Platform_clipboard::MIDDLE_BUTTON, string_temp);
                 }
 
                 if (pos.y >= context->screen_h - 2*pad) {

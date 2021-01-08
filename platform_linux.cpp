@@ -25,6 +25,7 @@ struct Platform_state {
     Display* display = nullptr;
     Window window;
     GLXWindow window_glx;
+    Atom sel_primary, sel_clipboard, sel_target, sel_utf8str, sel_string, sel_incr;
     Atom net_wm_state, net_wm_state_fullscreen, type_atom;
 
     Application app_context;
@@ -35,6 +36,9 @@ struct Platform_state {
     u64 frame_count = 0; // number of frames since program start
     
     s64 rate = -1;
+
+    Array_dyn<u8> clipboard_recv;
+    Array_dyn<u8> clipboard_send[Platform_clipboard::COUNT] = {};
 
     bool keys_dirty = true;
     char keys_map[32];
@@ -153,6 +157,90 @@ void linux_set_wm_class(Display* display, Window window, int argc, char** argv) 
     linux_set_wm_prop(display, window, "WM_CLASS", buf);
 }
 
+Array_t<u8> platform_clipboard_get(s64 index) {
+    s64 size = *(s64*)&global_platform.clipboard_recv[index];
+    index += sizeof(s64);
+    return array_subarray(global_platform.clipboard_recv, index, index+size);
+}
+void platform_clipboard_free(s64 index) {
+    auto arr = platform_clipboard_get(index);
+    if (arr.end() == global_platform.clipboard_recv.end()) {
+        global_platform.clipboard_recv.size = 0;
+    }
+}
+void platform_clipboard_set(u8 type, Array_t<u8> data) {
+    assert(type <= Platform_clipboard::COUNT);
+    global_platform.clipboard_send[type].size = 0;
+    array_append(&global_platform.clipboard_send[type], data);
+    auto type_x = type == Platform_clipboard::CONTROL_C ? global_platform.sel_clipboard : global_platform.sel_primary;
+    XSetSelectionOwner(global_platform.display, type_x, global_platform.window, CurrentTime);
+}
+void linux_handle_selection_request(Platform_state* platform, XSelectionRequestEvent* ev) {
+    XSelectionEvent ev_out;
+    memset(&ev_out, 0, sizeof(ev_out));
+    ev_out.type = SelectionNotify;
+    ev_out.requestor = ev->requestor;
+    ev_out.selection = ev->selection;
+    ev_out.target    = ev->target;
+    ev_out.time      = ev->time;
+
+    if (ev->target == platform->sel_utf8str or ev->target == platform->sel_string) {
+        Atom property = ev->property;
+        if (property == None) {
+            property = ev->target;
+        }
+
+        u8 sel_type = ev->selection == platform->sel_primary ? Platform_clipboard::MIDDLE_BUTTON : Platform_clipboard::CONTROL_C;
+        auto buf = platform->clipboard_send[sel_type];
+        XChangeProperty(platform->display, ev->requestor, property, ev->target, 8, PropModeReplace, buf.data, buf.size);
+        
+        ev_out.property = property;
+    } else {
+        ev_out.property = None;
+    }
+
+    XSendEvent(platform->display, ev_out.requestor, false, 0, (XEvent*)&ev_out);
+}
+    
+void linux_handle_selection_response(Platform_state* platform, XSelectionEvent* ev) {
+    if (ev->property == None) {
+        // Try to fall back to STRING type
+        XConvertSelection(platform->display, ev->selection, platform->sel_target, platform->sel_string, platform->window, ev->time);
+    } else {
+        Atom actual_type;
+        int actual_format;
+        unsigned long n_items, bytes_after;
+        u8* prop;
+        XGetWindowProperty(platform->display, platform->window, platform->sel_target, 0, -1, 0,
+            AnyPropertyType, &actual_type, &actual_format, &n_items, &bytes_after, &prop);
+
+        if (actual_type == platform->sel_incr) {
+            fprintf(stderr, "Warning: Received clipboard of type INCR, which obst does not implement.\n");
+            return;
+        } else if (actual_type == None or actual_format != 8) {
+            return;
+        }
+        
+        s64 index = global_platform.clipboard_recv.size;
+        s64 n_items_ = n_items;
+        array_append(&global_platform.clipboard_recv, {(u8*)&n_items_, sizeof(s64)});
+        array_append(&global_platform.clipboard_recv, {prop, (s64)n_items});
+
+        XFree(prop);
+        XDeleteProperty(platform->display, platform->window, platform->sel_target);
+
+        // TODO this is broken in this version of platform_linux
+        /*if (ev->selection == platform->sel_primary) {
+            // TODO This should not press buttons
+            Key key1 = Key::create_mouse(Key::LEFT_DOWN, platform->app_context.pointer_x, platform->app_context.pointer_y);
+            Key key2 = Key::create_mouse(Key::LEFT_UP,   platform->app_context.pointer_x, platform->app_context.pointer_y);
+            array_append(&global_platform.app_context.input_queue, {key1, key2});
+        }*/
+        
+        Key key = Key::create_special(Key::C_PASTE, 0, index);
+        array_push_back(&global_platform.app_context.input_queue, key);
+    }
+}
 
 void linux_fullscreen(Platform_state* platform) {
     // This tries to go to fullscreen via NET_WM_STATE, which might not work for some window managers
@@ -589,6 +677,21 @@ int main(int argc, char** argv) {
     assert(wm_protocols != None and wm_delete_window != None and type_atom != None);
     XChangeProperty(display, window, wm_protocols, type_atom, 32, PropModeReplace, (u8*)&wm_delete_window, 1);
 
+
+    // Query some atom we will later need for the clipboard
+    Atom sel_primary   = XInternAtom(display, "PRIMARY", true);
+    Atom sel_clipboard = XInternAtom(display, "CLIPBOARD", true);
+    Atom sel_utf8str   = XInternAtom(display, "UTF8_STRING", true);
+    Atom sel_string    = XInternAtom(display, "STRING", true);
+    Atom sel_target    = XInternAtom(display, "SELECTION_TARGET", false); // This one is arbitrary
+    Atom sel_incr      = XInternAtom(display, "INCR", true);
+    global_platform.sel_primary   = sel_primary;
+    global_platform.sel_clipboard = sel_clipboard;
+    global_platform.sel_utf8str   = sel_utf8str;
+    global_platform.sel_string    = sel_string;
+    global_platform.sel_target    = sel_target;
+    global_platform.sel_incr      = sel_incr;
+
     // And some atoms needed for fullscreen mode
     global_platform.net_wm_state            = XInternAtom(display, "_NET_WM_STATE", true);
     global_platform.net_wm_state_fullscreen = XInternAtom(display, "_NET_WM_STATE_FULLSCREEN", true);
@@ -681,6 +784,9 @@ int main(int argc, char** argv) {
                     platform_redraw(0);
                 }
             }
+            if (event.xbutton.button == Button2) {
+                XConvertSelection(display, sel_primary, sel_utf8str, sel_target, window, event.xbutton.time);
+            }
         } break;
         case ButtonRelease: {
             u32 buttons[] = {Button1, Button2, Button3};
@@ -703,7 +809,11 @@ int main(int argc, char** argv) {
         case KeyPress: {
             auto* iq = &global_platform.app_context.input_queue;
             linux_get_event_key(iq, event.xkey);
-            if (iq->size and (*iq)[iq->size-1].type == Key::SPECIAL and (*iq)[iq->size-1].special == Key::F11) {
+            if (iq->size and (*iq)[iq->size-1].type == Key::SPECIAL and (*iq)[iq->size-1].special == Key::C_PASTE) {
+                // Query the contents of the clipboard, we need to wait for them to arrive
+                XConvertSelection(display, sel_clipboard, sel_utf8str, sel_target, window, event.xkey.time);
+                --iq->size;
+            } else if (iq->size and (*iq)[iq->size-1].type == Key::SPECIAL and (*iq)[iq->size-1].special == Key::F11) {
                 // Toggle fullscreen
                 linux_fullscreen(&global_platform);
                 --iq->size;
@@ -712,6 +822,14 @@ int main(int argc, char** argv) {
             }
         } break;
             
+        case SelectionNotify:
+            linux_handle_selection_response(&global_platform, &event.xselection);
+            platform_redraw(0);
+            break;
+        case SelectionRequest:
+            linux_handle_selection_request(&global_platform, &event.xselectionrequest);
+            break;
+
         case MappingNotify:
             if (event.xmapping.request == MappingModifier or event.xmapping.request == MappingKeyboard) {
                 XRefreshKeyboardMapping(&event.xmapping);

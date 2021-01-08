@@ -248,7 +248,7 @@ void sat_rewrite_basic(Sat_instance* inst, u64 op, Array_t<u64> args) {
         
     case clause: {
         auto context = array_subindex(inst->context_offsets, inst->context_data, inst->context_stack.back());
-        array_append(&inst->clause_literals, context);
+        for (u64 lit: context) array_push_back(&inst->clause_literals, ~lit);
         sat_expand_recursive(inst, args, &inst->clause_literals);
         array_push_back(&inst->clause_constraint, inst->constraint_parent_stack.back());
         array_push_back(&inst->clause_offsets, inst->clause_literals.size);
@@ -261,7 +261,7 @@ void sat_rewrite_basic(Sat_instance* inst, u64 op, Array_t<u64> args) {
             assert(type == VAR);
         }
         auto context = array_subindex(inst->context_offsets, inst->context_data, inst->context_stack.back());
-        array_append(&inst->clause_literals, context);
+        for (u64 lit: context) array_push_back(&inst->clause_literals, ~lit);
         array_append(&inst->clause_literals, args);
         array_push_back(&inst->clause_constraint, inst->constraint_parent_stack.back());
         array_push_back(&inst->clause_offsets, inst->clause_literals.size);
@@ -717,7 +717,8 @@ void sat_write_dimacs(Sat_instance* inst, Sat_dimacs* dimacs) {
 void sat_write_human(Sat_instance* inst, Array_dyn<u8>* into) {
     Array_dyn<s64> parent_stack;
     defer { array_free(&parent_stack); };
-    
+
+    s64 i_clause = 0;
     for (s64 i = 0; i < inst->constraint_parent.size; ++i) {
         s64 parent = inst->constraint_parent[i];
 
@@ -732,6 +733,18 @@ void sat_write_human(Sat_instance* inst, Array_dyn<u8>* into) {
         
         sat_explain_constraint(inst, i, into);
         array_push_back(into, (u8)'\n');
+
+        while (i_clause < inst->clause_constraint.size and inst->clause_constraint[i_clause] == i) {
+            for (s64 j = 0; j < parent_stack.size*2; ++j) {
+                array_push_back(into, (u8)' ');
+            }
+
+            Array_t<u64> data = array_subindex(inst->clause_offsets, inst->clause_literals, i_clause);
+            sat_explain(inst, Sat::clause, data, into);
+            array_push_back(into, (u8)'\n');
+            
+            ++i_clause;
+        }
     }
 }
 
@@ -803,16 +816,17 @@ Sat_solution sat_solution_from_instance(
             bool flag = false;
             for (u64 lit: clause) {
                 switch (sol.get(lit)) {
-                case Sat_solution::L_FALSE: continue;
-                case Sat_solution::L_TRUE: prop = 0; break;
+                case Sat_solution::L_FALSE: break;
+                case Sat_solution::L_TRUE:
+                    prop = 0; flag = true;
+                    break;
                 case Sat_solution::L_UNASSIGNED: {
                     if (prop) {
-                        prop = 0;
                         retain = true;
-                        flag = true;
-                        break;
+                        prop = 0; flag = true;
+                    } else {
+                        prop = lit;
                     }
-                    prop = lit;
                     break;
                 };
                 default: assert(false);

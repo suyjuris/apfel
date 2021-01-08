@@ -174,6 +174,16 @@ enum Seek_whence: u8 {
 
 };
 
+namespace Platform_clipboard {
+enum Types: u8 {
+    CONTROL_C, MIDDLE_BUTTON, COUNT
+};
+}
+
+Array_t<u8> platform_clipboard_get(s64 index);
+void platform_clipboard_free(s64 index);
+void platform_clipboard_set(u8 type, Array_t<u8> data);
+
 int platform_open_try(Array_t<u8> path, u64 flags, u32 mode, int* out_fd);
 int platform_request_lock_try(int fd, bool* out_success);
 int platform_write_try(int fd, Array_t<u8> buf);
