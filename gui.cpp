@@ -164,7 +164,7 @@ void factorio_draw_solution(Application* context, Sat_solution* sol, Vec2 p, flo
                 if (inp) shape_arrowhead(&context->shapes, dp, -v1 * border_size/2 * arrow_fac, fill);
                 if (out) shape_arrowhead(&context->shapes, dp,  v1 * border_size/2 * arrow_fac, fill);
                 if (sid) {
-                    Vec2 w = v1 * center_size * 0.8f + v2 * border_size * 0.2f;
+                    Vec2 w = v2 * center_size * 0.8f + v1 * border_size * 0.2f;
                     shape_rectangle(&context->shapes, dp - w / 2.f, w, fill);
                 }
 
@@ -181,7 +181,7 @@ void factorio_draw_solution(Application* context, Sat_solution* sol, Vec2 p, flo
                 if (dir_out != -1) {
                     draw_split_indicator[(dir_out+1) & 3] = true;
                 } else if (dir_inp != -1) {
-                    draw_split_indicator[(dir_out+3) & 3] = true;
+                    draw_split_indicator[(dir_inp+3) & 3] = true;
                 } else {
                     float w;
                     font_metrics_codepoint_get(&context->fonts, context->font_solution, 'L', &w);
@@ -193,7 +193,7 @@ void factorio_draw_solution(Application* context, Sat_solution* sol, Vec2 p, flo
                 if (dir_out != -1) {
                     draw_split_indicator[(dir_out+3) & 3] = true;
                 } else if (dir_inp != -1) {
-                    draw_split_indicator[(dir_out+1) & 3] = true;
+                    draw_split_indicator[(dir_inp+1) & 3] = true;
                 } else {
                     float w;
                     font_metrics_codepoint_get(&context->fonts, context->font_solution, 'R', &w);
@@ -207,10 +207,10 @@ void factorio_draw_solution(Application* context, Sat_solution* sol, Vec2 p, flo
                 float arr[4] = {0, 1, 0, -1};
                 Vec2 v1 = {arr[ dd       ], arr[(dd+1) & 3]};
                 Vec2 v2 = {arr[(dd+1) & 3], arr[(dd+2) & 3]};
-                Vec2 dp = pi + size/2 + v1 * (size - border_size - border_pad) / 2;
+                Vec2 dpp = pi + size/2 + v1 * size/2;
 
-                Vec2 w = v1 * border_size + v2 * border_size * 2.f;
-                shape_rectangle(&context->shapes, dp - w / 2.f, w, fill);
+                float size = border_size * 0.6f;
+                shape_rectangle(&context->shapes, dpp - (v1 + v2)*size, v1*size + 2*v2*size, fill);
             }
 
             for (s64 i = 0; i < n_lines; ++i) {
@@ -378,6 +378,10 @@ void application_init(Application* context) {
     //inst.debug_forbidden_id = 0x2880118012300000ull;
 
     factorio_balancer(&context->sat_inst, p);
+    factorio_clauses_from_diagram(&context->sat_inst,
+        " >S> >\n"
+        "  S> >"_arr
+    );
 
     context->sat_sol = sat_solution_from_instance(
         &context->sat_inst, &context->sat_sol_anim_indices, &context->sat_sol_anim_data

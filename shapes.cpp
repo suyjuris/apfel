@@ -144,6 +144,8 @@ void shape_triangle(Shape_drawer* shapes, Vec2 p0, Vec2 p1, Vec2 p2, Color fill,
 
 void shape_rectangle(Shape_drawer* shapes, Vec2 p, Vec2 size, Color fill, float z = 0.f) {
     z += shapes->z_level_add;
+    if (size.x < 0) { p.x += size.x; size.x = -size.x; }
+    if (size.y < 0) { p.y += size.y; size.y = -size.y; }
     
     opengl_buffer_append<Vec2>(&shapes->rectangle, 0, "off", {
         {0.f, 0.f}, {size.x + 1.f, 0}, size + 1.f, {0.f, 0.f}, size + 1.f, {0, size.y + 1.f}

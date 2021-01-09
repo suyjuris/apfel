@@ -1143,6 +1143,9 @@ void factorio_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
         
         // *** Basics *** /
 
+        // Exactly one type
+        sat_add(inst, exactly_one, {f.empty, f.belt, f.split, f.under});
+                
         // If splitter, either left or right, ...
         sat_push_add_pop(inst, {f.split},  exactly_one, { f.splitl,  f.splitr});
         // ... else neither.
@@ -1158,7 +1161,12 @@ void factorio_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
             sat_add(inst, at_most_one, {fd.inp, fd.out});
 
             // Sideflags
-            sat_addg(inst, implies, {f.belt,  ~fd.inp, ~fd.out}, {fd.sid});
+            // A belt has sides everywhere it does not have inputs or outputs
+            sat_push(inst, {f.belt});
+            sat_addg(inst, implies, {~fd.inp, ~fd.out}, {fd.sid});
+            sat_push_add_pop(inst, {fd.sid}, logical_and, {~fd.inp, ~fd.out});
+            sat_pop(inst);
+            // An undergrond belt has sides either horizontally or vertically
             sat_push_add_pop(inst, {f.under}, equivalent, {fd.turnl().und, fd.sid});
 
             // Splitter flag causes straight flow
@@ -1188,8 +1196,8 @@ void factorio_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
             }; sat_pop(inst);
 
             // Non-splitters must have input and output connected
-            sat_push_add_pop(inst, {~f.split}, equivalent, {fd.inp, fd.move().back().out});
-            sat_push_add_pop(inst, {~f.split}, equivalent, {fd.out, fd.move().back().inp});
+            sat_push_add_pop(inst, {~f.split, ~f.empty}, equivalent, {fd.inp, fd.move().back().out});
+            sat_push_add_pop(inst, {~f.split, ~f.empty}, equivalent, {fd.out, fd.move().back().inp});
 
             // For underground lines, input/output direction determines underground direction
             sat_push(inst, {f.under});
@@ -1199,6 +1207,10 @@ void factorio_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
             sat_pop(inst);
         }        
 
+        // There is alwas at most one input and at most one output
+        sat_add(inst, at_most_one, {f.dir_all.inp});
+        sat_add(inst, at_most_one, {f.dir_all.out});
+        
         // Belts and Splitters must have at least one input and at least one output
         sat_add(inst, implies, {f.belt, f.dir_all.inp});
         sat_add(inst, implies, {f.belt, f.dir_all.out});
@@ -1751,4 +1763,46 @@ void factorio_balancer(Sat_instance* inst, Factorio_params params) {
     factorio_add_fields(inst, arr, params.yoff_output, params.yoff_input);
 }
 
+void factorio_clauses_from_diagram(Sat_instance* inst, Array_t<u8> text) {
+    using namespace Sat;
+    
+    s64 x = 0, y = 0;
+    for (s64 i = 0; i < text.size; i += 2) {
+        Field f {x, y};
+        
+        u8 c0 = text[i];
+        u8 c1 = i+1 < text.size ? text[i+1] : 0;
 
+        if (c0 == '\n') {
+            x = 0; ++y; --i; continue;
+        }
+        
+        u64 type = f.belt;
+        
+        switch (c0) {
+        case '^': sat_add(inst, clause, {f.dirs[2].inp}); break;
+        case '>': sat_add(inst, clause, {f.dirs[3].inp}); break;
+        case 'v': sat_add(inst, clause, {f.dirs[0].inp}); break;
+        case '<': sat_add(inst, clause, {f.dirs[1].inp}); break;
+        case 'u': type = f.under; break;
+        case 'S': type = f.split; break;
+        case ' ': break;
+        default: assert(false);
+        }
+        switch (c1) {
+        case '^': sat_add(inst, clause, {f.dirs[0].out}); break;
+        case '>': sat_add(inst, clause, {f.dirs[1].out}); break;
+        case 'v': sat_add(inst, clause, {f.dirs[2].out}); break;
+        case '<': sat_add(inst, clause, {f.dirs[3].out}); break;
+        case 'u': type = f.under; break;
+        case ' ': type = f.empty; break;
+        default: assert(false);
+        }
+
+        assert(type != f.empty or c0 == ' ');
+
+        sat_add(inst, clause, {type});
+
+        x += 1;
+    }
+}
