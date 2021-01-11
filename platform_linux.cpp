@@ -513,6 +513,30 @@ int platform_chmod_try(int fd, u32 mode) {
     return 0;
 }
 
+Array_t<u8> platform_read_whole_file(Array_t<u8> path) {
+    int fd;
+    if (platform_open_try(path, Platform::OPEN_READ, 0, &fd)) goto error_nocontext;
+
+    {u64 size;
+    if (platform_seek_try(fd, 0, Platform::P_SEEK_END, &size)) goto error;
+    if (platform_seek_try(fd, 0, Platform::P_SEEK_SET)) goto error;
+
+    {Array_t<u8> result = array_create<u8>(size);
+
+    if (platform_read_try(fd, result)) goto error;    
+    if (platform_close_try(fd)) goto error;    
+    
+    return result;}}
+
+  error:
+    array_printf(&platform_error_buf, "while reading file at '");
+    array_append(&platform_error_buf, path);
+    array_printf(&platform_error_buf, "'\n");
+  error_nocontext:
+    platform_error_print();
+    exit(6);
+}
+
 void _platform_init(Platform_state* platform) {
     _platform_init_gl_pointers();
     

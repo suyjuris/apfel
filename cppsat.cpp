@@ -753,7 +753,6 @@ struct Sat_solution {
         L_UNASSIGNED, L_FALSE, L_TRUE
     };
 
-    Sat_instance* inst;
     Hashmap<bool> values;
 
     u8 get(u64 lit) {
@@ -794,7 +793,6 @@ Sat_solution sat_solution_from_instance(
     }
     
     Sat_solution sol;
-    sol.inst = inst;
 
     Array_dyn<s64> clauses, mark_for_entry;
     array_reserve(&clauses, inst->clause_offsets.size-1);
@@ -1735,8 +1733,8 @@ void factorio_add_fields(Sat_instance* inst, Array_t<s64> params, Array_t<s64> y
 }
 
 struct Factorio_params {
-    s64 nx, ny, n_under, scale_fac;
-    bool do_blocking;
+    s64 nx = 0, ny = 0, n_under = 10, scale_fac = 1;
+    bool do_blocking = true;
     Array_t<s64> yoff_output, yoff_input;
 };
 
@@ -1786,7 +1784,7 @@ void factorio_clauses_from_diagram(Sat_instance* inst, Array_t<u8> text) {
         case '<': sat_add(inst, clause, {f.dirs[1].inp}); break;
         case 'u': type = f.under; break;
         case 'S': type = f.split; break;
-        case ' ': break;
+        case '.': break;
         default: assert(false);
         }
         switch (c1) {
@@ -1795,14 +1793,226 @@ void factorio_clauses_from_diagram(Sat_instance* inst, Array_t<u8> text) {
         case 'v': sat_add(inst, clause, {f.dirs[2].out}); break;
         case '<': sat_add(inst, clause, {f.dirs[3].out}); break;
         case 'u': type = f.under; break;
-        case ' ': type = f.empty; break;
+        case '.': type = f.empty; break;
         default: assert(false);
         }
 
-        assert(type != f.empty or c0 == ' ');
+        assert(type != f.empty or c0 == '.');
 
         sat_add(inst, clause, {type});
 
         x += 1;
+    }
+}
+
+struct Factorio_instance {
+    Array_t<u8> name;
+    Factorio_params params;
+};
+
+struct Factorio_solution {
+    Array_t<u8> name;
+    Array_t<u8> instance_name;
+    Array_t<u8> ascii_diagram;
+};
+
+struct Factorio_db {
+    // This owns the memory inside!
+    Array_t<u8> _parsed_text;
+    Array_dyn<Factorio_instance> instances;
+    Array_dyn<Factorio_solution> solutions;
+};
+
+void factorio_db_parse(Factorio_db* fdb, Array_t<u8> data) {
+    fdb->_parsed_text = data;
+
+    struct Token {
+        enum Token_type: u8 {
+            // singe char operators are themselves
+            IDENTIFIER = 128, NUMBER
+        };
+        u8 type;
+        s64 beg, end, line;
+        u64 number = 0;
+    };
+
+    Array_dyn<Token> tokens;
+    defer { array_free(&tokens); };
+
+    {s64 last = -1;
+    bool alldigit = true;
+    s64 line_cur = 0;
+    for (s64 i = 0; i <= data.size; ++i) {
+        u8 c = i < data.size ? data[i] : 0;
+        bool istok = false, isspace = false;
+        
+        for (u8 cc: ",=[]{}"_arr) istok   |= c == cc;
+        for (u8 cc: " \t\n"_arr)  isspace |= c == cc;
+        isspace |= c == 0;
+
+        if (istok or isspace) {
+            if (last != -1) {
+                if (alldigit) {
+                    u64 val = 0;
+                    for (s64 j = last; j < i; ++j) {
+                        val = 10*val + (data[j] - '0');
+                    }
+                    array_push_back(&tokens, {Token::NUMBER, last, i, line_cur, val});
+                } else {
+                    array_push_back(&tokens, {Token::IDENTIFIER, last, i, line_cur});
+                }
+                last = -1;
+                alldigit = true;
+            }
+            if (istok) array_push_back(&tokens, {c, i, i+1, line_cur});                
+        } else {
+            if (last == -1) last = i;
+            alldigit &= '0' <= c and c <= '9';
+        }
+        line_cur += c == '\n';
+    }}
+
+    auto print_type = [](u8 type) {
+        if (type == Token::IDENTIFIER) fprintf(stderr, "<identifier>");
+        else if (type == Token::NUMBER) fprintf(stderr, "<number>");
+        else if (type == 0) fprintf(stderr, "<eof>");
+        else fprintf(stderr, "'%c'", type);
+    };
+    auto print_val = [data](Token tok) {
+        if (tok.type == Token::IDENTIFIER) {
+            auto str = array_subarray(data, tok.beg, tok.end);
+            fprintf(stderr, " (value: '");
+            fwrite(str.data, 1, str.size, stderr);
+            fprintf(stderr, "')");
+        } else if (tok.type == Token::NUMBER) {
+            fprintf(stderr, " (value: %llu)'", tok.number);
+        }
+    };
+
+    //for (Token i: tokens) { print_type(i.type); print_val(i); puts(""); }
+
+    auto match = [&](s64* i, u8 type, Array_t<u8>* into_str=nullptr) {
+        Token tok = tokens[*i];
+        auto str = array_subarray(data, tok.beg, tok.end);
+        
+        if (tok.type != type) {
+            fprintf(stderr, "Error (line %lld): expected token with type ", tok.line);
+            print_type(type);
+            fprintf(stderr, ", got type ");
+            print_type(tok.type);
+            print_val(tok);
+            fprintf(stderr, "\n");
+            exit(5);
+        }
+        
+        if (into_str) *into_str = str;
+        ++*i;
+    };
+    
+    for (s64 i = 0; i < tokens.size;) {
+        Array_t<u8> heading;
+        match(&i, Token::IDENTIFIER, &heading);
+        
+        if (array_equal_str(heading, "instance")) {
+            Factorio_instance fi;
+            match(&i, Token::IDENTIFIER, &fi.name);
+            match(&i, '{');
+            while (tokens[i].type != '}') {
+                Array_t<u8> par_name;
+                match(&i, Token::IDENTIFIER, &par_name);
+
+                static constexpr s64 count = 7;
+                Factorio_params* p = &fi.params;
+                char const* pars[count] = { "nx", "ny", "n_under", "scale_fac", "do_blocking", "yoff_output", "yoff_input" };
+                void* ptrs[count] = { &p->nx,&p->ny,&p->n_under,&p->scale_fac,&p->do_blocking,&p->yoff_output,&p->yoff_input };
+                s64 types[count] = {1, 1, 1, 1, 2, 3, 3};
+
+                s64 found = -1;
+                for (s64 j = 0; j < count; ++j) {
+                    if (array_equal_str(par_name, pars[j])) {
+                        found = j; break;
+                    }
+                }
+                if (found == -1) {
+                    fprintf(stderr, "Error (line %lld): Unrecognised parameter '", tokens[i-1].line);
+                    fwrite(par_name.data, 1, par_name.size, stderr);
+                    fprintf(stderr, "'\n");
+                    exit(5);
+                }
+
+                match(&i, '=');
+
+                if (types[found] == 1) {
+                    match(&i, Token::NUMBER);
+                    *(u64*)ptrs[found] = tokens[i-1].number;
+                } else if (types[found] == 2) {
+                    match(&i, Token::NUMBER);
+                    *(bool*)ptrs[found] = tokens[i-1].number;
+                } else if (types[found] == 3) {
+                    match(&i, '[');
+                    s64 orig_i = i;
+                    s64 count = 0;
+                    while (tokens[i].type != ']') {
+                        match(&i, Token::NUMBER);
+                        ++count;
+                        if (tokens[i].type == ',') ++i;
+                    }
+                    Array_t<u64> numbers = array_create<u64>(count);
+                    count = 0;
+                    i = orig_i;
+                    while (tokens[i].type != ']') {
+                        match(&i, Token::NUMBER);
+                        numbers[count++] = tokens[i-1].number;
+                        if (tokens[i].type == ',') ++i;
+                    }
+                    assert(numbers.size == count);
+                    *(Array_t<u64>*)ptrs[found] = numbers;
+                    match(&i, ']');
+                } else {
+                    assert(false);
+                }
+                
+                if (tokens[i].type == ',') ++i;
+            }
+
+            array_push_back(&fdb->instances, fi);
+            match(&i, '}');
+        } else if (array_equal_str(heading, "solution")) {
+            Factorio_solution sol;
+            match(&i, Token::IDENTIFIER, &sol.instance_name);
+            match(&i, Token::IDENTIFIER, &sol.name);
+            match(&i, '{');
+
+            s64 total_size = 0;
+            {s64 orig_i = i;
+            while (tokens[i].type != '}') {
+                Array_t<u8> line;
+                match(&i, Token::IDENTIFIER, &line);
+                total_size += line.size + 1;
+            }
+            i = orig_i;}
+
+            {Array_dyn<u8> diagram;
+            array_reserve(&diagram, total_size);
+            diagram.do_not_reallocate = true;
+            
+            while (tokens[i].type != '}') {
+                Array_t<u8> line;
+                match(&i, Token::IDENTIFIER, &line);
+                array_append(&diagram, line);
+                array_push_back(&diagram, '\n');
+            }
+            assert(diagram.size == total_size);
+
+            sol.ascii_diagram = diagram;}
+            
+            array_push_back(&fdb->solutions, sol);
+            match(&i, '}');
+        } else {
+            fprintf(stderr, "Error (line %lld): Expected either 'instance' or 'solution', got '", tokens[i-1].line);
+            fwrite(heading.data, 1, heading.size, stderr);
+            fprintf(stderr, "'\n");
+            exit(5);
+        }
     }
 }

@@ -193,6 +193,7 @@ int platform_truncate_try(int fd, u64 size);
 int platform_close_try(int fd);
 int platform_chmod_try(int fd, u32 mode);
 
+Array_t<u8> platform_read_whole_file(Array_t<u8> path);
 
 // The following are callbacks to be implemented by the application
 
