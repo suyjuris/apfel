@@ -14,7 +14,9 @@
 #include "shapes.cpp"
 
 #include "array_linux.cpp"
-#include "cppsat.cpp"
+#include "sat.cpp"
+#include "factorio_sat.cpp"
+#include "gui.cpp"
 
 
 struct Factorio_solution_draw {
@@ -106,10 +108,10 @@ void factorio_solution_draw_image(Application* context, Factorio_solution_draw* 
     float arrow_fac = 0.8f;
     font_instance_scale(&context->fonts, context->font_solution, border_size);
 
-    s64 nx = hashmap_get(&draw->inst.params, Sat::fpar_nx);
-    s64 ny = hashmap_get(&draw->inst.params, Sat::fpar_ny);
-    s64 n_lines = hashmap_get(&draw->inst.params, Sat::fpar_n_lines);
-    s64 n_linedim = hashmap_get(&draw->inst.params, Sat::fpar_n_linedim);
+    s64 nx = hashmap_get(&draw->inst.params, Factorio::fpar_nx);
+    s64 ny = hashmap_get(&draw->inst.params, Factorio::fpar_ny);
+    s64 n_lines = hashmap_get(&draw->inst.params, Factorio::fpar_n_lines);
+    s64 n_linedim = hashmap_get(&draw->inst.params, Factorio::fpar_n_linedim);
     
     float center_size = bar_w * n_lines;
     float size = (border_size + border_pad) * 2 + center_size;
@@ -262,7 +264,7 @@ void factorio_solution_draw_image(Application* context, Factorio_solution_draw* 
 }
 
 void factorio_solution_draw_detail(Application* context, Factorio_solution_draw* draw, Vec2 p) {
-    s64 n_linedim = hashmap_get(&draw->inst.params, Sat::fpar_n_linedim);
+    s64 n_linedim = hashmap_get(&draw->inst.params, Factorio::fpar_n_linedim);
 
     auto font_sans = font_instance_get(&context->fonts, context->font_sans);
 
@@ -375,7 +377,7 @@ void factorio_solution_draw_props(Application* context, Factorio_solution_draw* 
     u64 only_val = 0;
     if (draw->sol_detail) {
         only_mask = Sat::MASK_SUBTYPE | Field::COORD_MASK;
-        only_val = Sat::VAR_FACTORIO | (u64)(draw->sol_detail_x + Field::COORD_OFFSET) << 40
+        only_val = Factorio::VAR_FACTORIO | (u64)(draw->sol_detail_x + Field::COORD_OFFSET) << 40
             | (u64)(draw->sol_detail_y + Field::COORD_OFFSET) << 24;
         assert((only_val & ~only_mask) == 0);
     }
