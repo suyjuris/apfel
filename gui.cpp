@@ -368,7 +368,6 @@ void factorio_solution_draw_props(Application* context, Factorio_solution_draw* 
 
     auto font_sans = font_instance_get(&context->fonts, context->font_sans);
     Vec2 posmax = pos + size;
-    pos.y += font_sans.ascent;
     
     auto arr = array_subindex(draw->anim_indices, draw->anim_data, draw->anim_frame-1);
 
@@ -390,7 +389,7 @@ void factorio_solution_draw_props(Application* context, Factorio_solution_draw* 
         context->string_temp.size = 0;
         sat_explain(&draw->inst, i.lit, &context->string_temp);
 
-        Vec2 rect_p = {pos.x, pos.y - font_sans.ascent};
+        Vec2 rect_p = {pos.x, pos.y};
         Vec2 rect_size = {0.f, font_sans.height};
         font_metrics_string_get(&context->fonts, context->font_sans, context->string_temp, &rect_size.x);
 
@@ -418,7 +417,7 @@ void factorio_solution_draw_props(Application* context, Factorio_solution_draw* 
                 if (next_x < x) next_x = x;}
 
                 if (pos.y >= posmax.y) {
-                    pos = Vec2 {next_x + draw->pad, orig.y + font_sans.ascent};
+                    pos = Vec2 {next_x + draw->pad, orig.y};
                 }
 
                 constraint = draw->inst.constraint_parent[constraint];
@@ -430,7 +429,7 @@ void factorio_solution_draw_props(Application* context, Factorio_solution_draw* 
             platform_clipboard_set(Platform_clipboard::MIDDLE_BUTTON, context->string_temp);
         }
 
-        if (pos.y - font_sans.ascent + font_sans.height >= posmax.y) {
+        if (pos.y + font_sans.height >= posmax.y) {
             pos = Vec2 {next_x + draw->pad, orig.y};
         }
     }
@@ -441,21 +440,18 @@ void factorio_solution_draw(Application* context, Factorio_solution_draw* draw, 
     {auto arr = array_subarray(draw->anim_data, 0, draw->anim_indices[draw->anim_frame]);
     for (Sat_propagation i: arr) draw->sol.set(i.lit);}
     
-    auto font_sans = font_instance_get(&context->fonts, context->font_sans);
-    
     float next_x;
     {Vec2 p = pos;
-    p.y += font_sans.ascent;
     
     context->string_temp.size = 0;
     array_printf(&context->string_temp, "Frame %lld/%lld", draw->anim_frame, draw->anim_indices.size - 1);
     font_draw_string(&context->fonts, context->font_sans, context->string_temp, p, Palette::BLACK, nullptr, &p.y); 
-    p.y += draw->pad - font_sans.ascent;
+    p.y += draw->pad;
 
     factorio_solution_draw_image(context, draw, p, &next_x, &p.y);
 
     if (draw->sol_detail) {
-        p.y += draw->pad + font_sans.ascent;
+        p.y += draw->pad;
         factorio_solution_draw_detail(context, draw, p);
     }}
 
@@ -500,8 +496,6 @@ void factorio_solution_init(Factorio_solution_draw* draw, Factorio_params p, Fac
 bool factorio_db_choose_params_draw(Application* context, Factorio_params_draw* draw, Sat_instance* into_inst, Vec2 p) {
     auto font_sans = font_instance_get(&context->fonts, context->font_sans);
     
-    p.y += font_sans.ascent;
-
     font_draw_string(&context->fonts, context->font_sans, "Choose instance:"_arr, p, Palette::BLACK, nullptr, &p.y);    
     p.y += font_sans.newline * 0.5;
     p.x += font_sans.space * 2;
@@ -588,18 +582,16 @@ bool factorio_db_choose_params_draw(Application* context, Factorio_params_draw* 
             font_metrics_string_get(&context->fonts, context->font_sans, name, &w_name);
             wsol += w_name + font_sans.space;
 
-            application_clickable(context, "choose_instance,solution"_arr, {(u64)i, (u64)j},
-                {vv.x, vv.y - font_sans.ascent}, {w_name, font_sans.height});
+            application_clickable(context, "choose_instance,solution"_arr, {(u64)i, (u64)j}, vv, {w_name, font_sans.height});
 
             font_draw_string(&context->fonts, context->font_sans, name, vv, c);
         }
         v.y += font_sans.newline;
 
-        Vec2 click_p {p.x, p.y - font_sans.ascent};
         Vec2 click_r {v.x + max(w0, w1), v.y - p.y};
-        application_clickable(context, "choose_instance,instance"_arr, {(u64)i}, click_p, click_r, 0.02f);
+        application_clickable(context, "choose_instance,instance"_arr, {(u64)i}, p, click_r, 0.02f);
         if (draw->current_instance == i) {
-            shape_rectangle(&context->shapes, click_p, click_r, Palette::BGBLUE, 0.03f);
+            shape_rectangle(&context->shapes, p, click_r, Palette::BGBLUE, 0.03f);
         }
         
         p.y = v.y + font_sans.newline * 0.25f;

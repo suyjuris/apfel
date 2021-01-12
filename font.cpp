@@ -520,13 +520,17 @@ Font_data::Glyph_handle _font_glyph_get_handle(Font_data* fonts, s64 font_base, 
     return handle;
 }
 
-void font_draw_codepoint_base(Font_data* fonts, s64 font_base, u32 codepoint, Vec2 pos, Vec2 scale, Color fill, float* out_advance=nullptr) {
+void font_draw_codepoint_base(
+    Font_data* fonts, s64 font_base, u32 codepoint,
+    Vec2 pos_baseline, Vec2 scale, Color fill,
+    float* out_advance=nullptr
+) {
     font_base ^= Font_data::MAGIC_INFOS;
     Font_data::Glyph_handle handle = _font_glyph_get_handle(fonts, font_base, codepoint);
 
     if (handle.index < 0xfffe) {
         ++fonts->glyph_counts.data[handle.index];
-        array_push_back(&fonts->draw_glyphs, {handle.index, pos, scale, fill});
+        array_push_back(&fonts->draw_glyphs, {handle.index, pos_baseline, scale, fill});
     }
     if (out_advance) *out_advance = handle.advance * scale.x;
 }
@@ -593,8 +597,8 @@ void font_draw_codepoint(
     float* x_out=nullptr, float* yn_out=nullptr
 ) {
     auto inst = fonts->instances[font_instance ^ Font_data::MAGIC_INSTANCES];
-    font_draw_codepoint_base(fonts, inst.info ^ Font_data::MAGIC_INFOS,
-        codepoint, pos, {inst.scale, inst.scale}, fill, x_out);
+    font_draw_codepoint_base(fonts, inst.info ^ Font_data::MAGIC_INFOS, codepoint,
+        {pos.x, pos.y + inst.ascent}, {inst.scale, inst.scale}, fill, x_out);
 
     if (x_out) *x_out += pos.x;
     if (yn_out) *yn_out = pos.y + inst.newline;
@@ -677,9 +681,9 @@ u32 font_word_create(Font_data* fonts, s64 font_instance, Array_t<u32> codepoint
 }
 
 
-void font_draw_word(Font_data* fonts, u32 word, Vec2 pos, Color fill, float* out_advance=nullptr) {
+void font_draw_word(Font_data* fonts, u32 word, Vec2 pos_baseline, Color fill, float* out_advance=nullptr) {
     word ^= Font_data::MAGIC_WORD;
-    array_push_back(&fonts->draw_words, {word, pos, fill});
+    array_push_back(&fonts->draw_words, {word, pos_baseline, fill});
     Font_data::Word w = fonts->words[word];
     if (out_advance) {
         auto inst = fonts->instances[w.font_instance ^ Font_data::MAGIC_INSTANCES];
@@ -976,7 +980,7 @@ void font_fmt_text(Font_data* fonts, u64 flags_add, Array_t<u8> str) {
 }
 
 void font_fmt_draw(
-    Font_data* fonts, s64 slot, Vec2 pos, float w, Color fill={0,0,0,255},
+    Font_data* fonts, s64 slot, Vec2 pos /* baseline */, float w, Color fill={0,0,0,255},
     float* x_out=nullptr, float* y_out=nullptr, bool only_measure=false, float* xw_out=nullptr
 ) {
     Array_t<Font_data::Text_box> boxes = hashmap_get(&fonts->text_slots, slot).boxes;
