@@ -12,11 +12,11 @@
 #include "spline.cpp"
 #include "font.cpp"
 #include "shapes.cpp"
+#include "gui.cpp"
 
 #include "array_linux.cpp"
 #include "sat.cpp"
 #include "factorio_sat.cpp"
-#include "gui.cpp"
 
 
 struct Factorio_solution_draw {
@@ -60,22 +60,8 @@ struct Application {
     s64 font_solution;
     Array_dyn<u8> string_temp;
 
+    Gui gui;
     Shape_drawer shapes;
-
-    enum Click_rect_flags: u8 {
-        CLICK_RECT_CLICKED = 1,
-        CLICK_RECT_CLICKED_TOGGLE = 4,
-        CLICK_RECT_DEAD = 2,
-        CLICK_RECT_CLICKED_RIGHT = 8,
-    };
-    
-    struct Click_rect {
-        u64 id;
-        Vec2 p, size;
-        float z;
-        u8 flags;
-    };
-    Array_dyn<Click_rect> clickable;
 
     enum Application_state: u8 {
         CHOOSE_PARAMS = 0, DRAW_SOLUTION
@@ -85,21 +71,6 @@ struct Application {
     Factorio_params_draw factorio_params_draw;
     Factorio_solution_draw factorio_solution_draw;
 };
-
-u8 application_clickable(Application* context, Array_t<u8> name, Array_t<u64> name_args, Vec2 p = {}, Vec2 size = {}, float z = 0.f) {
-    u64 id = hash_u64(hash_str(name)) ^ hash_arr(name_args);
-    Application::Click_rect r {id, p, size, z, 0};
-    
-    for (auto& i: context->clickable) {
-        if (i.id == r.id) {
-            r.flags = i.flags & ~Application::CLICK_RECT_DEAD;
-            i = r;
-            return i.flags;
-        }
-    }
-    array_push_back(&context->clickable, r);
-    return r.flags;
-}
 
 void factorio_solution_draw_image(Application* context, Factorio_solution_draw* draw, Vec2 p, float* x_out, float* y_out) {
     float border_size = 16;
@@ -118,10 +89,8 @@ void factorio_solution_draw_image(Application* context, Factorio_solution_draw* 
 
     for (s64 yi = -1; yi <= ny; ++yi) {
         for (s64 xi = -1; xi <= nx; ++xi) {
-            Vec2 pi = p + size * Vec2 {xi + 1.f, yi + 1.f};
-
-            u8 click_flags = application_clickable(context, "draw_solution"_arr, {(u64)xi, (u64)yi}, pi, {size, size}, 0.2f);
-            if (click_flags & Application::CLICK_RECT_CLICKED) {
+            u32 click_flags = gui_pointable(&context->gui, "draw_solution"_arr, {xi, yi});
+            if (click_flags & Gui::EVENT_CLICKED) {
                 if (draw->sol_detail and draw->sol_detail_x == xi and draw->sol_detail_y == yi) {
                     draw->sol_detail = false;
                 } else {
@@ -137,14 +106,18 @@ void factorio_solution_draw_image(Application* context, Factorio_solution_draw* 
         for (s64 xi = -1; xi <= nx; ++xi) {
             Vec2 pi = p + size * Vec2 {xi + 1.f, yi + 1.f};
             Field f {xi, yi};
+
+            u32 click_flags = gui_pointable(&context->gui, "draw_solution"_arr, {xi, yi}, pi, {size, size}, 0.2f);
+            bool is_detail = draw->sol_detail and draw->sol_detail_x == xi and draw->sol_detail_y == yi;
+            bool is_active = (click_flags & Gui::DRAW_ACTIVE);
             
             bool flags[] = {draw->sol.istrue(f.empty), draw->sol.istrue(f.belt),
                             draw->sol.istrue(f.split), draw->sol.istrue(f.under)};
-            Color colors[] = {Palette::NONE, Palette::BGBLUE, Palette::BGGREEN, Palette::BGPURPLE};
+            Color colors[] = {Palette::BG, Palette::BGBLUE, Palette::BGGREEN, Palette::BGPURPLE};
             s64 flags_size = sizeof(flags) / sizeof(flags[0]);
 
             bool isset = false;
-            Color bg_fill = Palette::WHITE;
+            Color bg_fill = lerp(Palette::WHITE, Palette::BLACK, 0.03f);;
             for (s64 i = 0; i < flags_size; ++i) {
                 if (not flags[i]) continue;
                 if (not isset) {
@@ -154,9 +127,12 @@ void factorio_solution_draw_image(Application* context, Factorio_solution_draw* 
                     bg_fill = Palette::REDLIGHT;
                 }
             }
+            if (is_active) {
+                bg_fill = lerp(bg_fill, Palette::WHITE, 0.5f);
+            }
             shape_rectangle(&context->shapes, pi, {size, size}, bg_fill, 0.2f);
 
-            if (draw->sol_detail and draw->sol_detail_x == xi and draw->sol_detail_y == yi) {
+            if (is_detail) {
                 Color c = lerp(Palette::WHITE, Palette::BLACK, .7f);
                 shape_rectangle(&context->shapes, pi-1, {size+2, 1}, c);
                 shape_rectangle(&context->shapes, pi-1, {1, size+2}, c);
@@ -392,13 +368,19 @@ void factorio_solution_draw_props(Application* context, Factorio_solution_draw* 
         sat_explain(&draw->inst, i.lit, &context->string_temp);
 
         Vec2 rect_p = {pos.x, pos.y};
-        Vec2 rect_size = {0.f, font_sans.height};
+        Vec2 rect_size = {0.f, font_sans.newline};
         font_metrics_string_get(&context->fonts, context->font_sans, context->string_temp, &rect_size.x);
 
-        u8 flags = application_clickable(context, "lit_detail"_arr, {i.lit, (u64)i.clause}, rect_p, rect_size, 0.1f);
+        u32 flags = gui_pointable(&context->gui, "lit_detail"_arr, {(s64)i.lit, i.clause}, rect_p, rect_size, 0.1f);
+        if (flags & Gui::EVENT_CLICKED) {
+            auto* r = gui_pointable_get(&context->gui, "lit_detail"_arr, {(s64)i.lit, i.clause});
+            r->flags ^= Gui::MOD_USER1;
+            flags = r->flags;
+        }
+        bool is_expanded = flags & Gui::MOD_USER1;
 
-        Color c = flags & Application::CLICK_RECT_CLICKED_TOGGLE ? Palette::RED : base;
-
+        Color c = is_expanded ? Palette::RED : base;
+        c = flags & Gui::DRAW_ACTIVE ? lerp(c, Palette::WHITE, 0.5f) : c;
         float y_prev = pos.y;
         {float x;
         font_draw_string(&context->fonts, context->font_sans, context->string_temp, pos, c, &x, &pos.y);
@@ -408,7 +390,7 @@ void factorio_solution_draw_props(Application* context, Factorio_solution_draw* 
             shape_rectangle(&context->shapes, rect_p, rect_size, Palette::BGRED);
         }
 
-        if (flags & Application::CLICK_RECT_CLICKED_TOGGLE) {
+        if (is_expanded) {
             u64 constraint = draw->inst.clause_constraint[i.clause];
             while (constraint != -1) {
                 context->string_temp.size = 0;
@@ -425,7 +407,7 @@ void factorio_solution_draw_props(Application* context, Factorio_solution_draw* 
                 constraint = draw->inst.constraint_parent[constraint];
             }
         }
-        if (flags & Application::CLICK_RECT_CLICKED_RIGHT) {
+        if (flags & Gui::EVENT_CLICKED_R) {
             context->string_temp.size = 0;
             array_printf(&context->string_temp, "0x%llx", i.lit);
             platform_clipboard_set(Platform_clipboard::MIDDLE_BUTTON, context->string_temp);
@@ -498,9 +480,6 @@ void factorio_solution_init(Factorio_solution_draw* draw, Factorio_params p, Fac
 bool factorio_db_choose_params_draw(Application* context, Factorio_params_draw* draw, Sat_instance* into_inst, Vec2 p) {
     auto font_sans = font_instance_get(&context->fonts, context->font_sans);
     
-    font_draw_string(&context->fonts, context->font_sans, "Choose instance:"_arr, p, Palette::BLACK, nullptr, &p.y);    
-    p.y += font_sans.newline * 0.5;
-    p.x += font_sans.space * 2;
 
     float name_w = 0.f;
     for (Factorio_instance i: draw->fdb.instances) {
@@ -511,14 +490,16 @@ bool factorio_db_choose_params_draw(Application* context, Factorio_params_draw* 
 
     bool instance_was_chosen = false;
     for (s64 i = 0; i < draw->fdb.instances.size; ++i) {
-        u8 flags = application_clickable(context, "choose_instance,instance"_arr, {(u64)i});
-        if (flags & Application::CLICK_RECT_CLICKED) {
-            if (draw->current_instance == i) {
-                instance_was_chosen = true;
-            } else {
-                draw->current_instance = i;
-            }
-        }
+        {u32 flags = gui_pointable(&context->gui, "choose_instance,instance"_arr, {i});
+        if (flags & Gui::EVENT_CLICKED) {
+            draw->current_instance = i;
+        }}
+        {u32 flags = gui_pointable(&context->gui, "choose_instance,instance_go"_arr, {i});
+        if (flags & Gui::EVENT_CLICKED) {
+            draw->current_instance = i;
+            instance_was_chosen = true;
+            break;
+        }}
     }
 
     if (instance_was_chosen) {
@@ -527,6 +508,10 @@ bool factorio_db_choose_params_draw(Application* context, Factorio_params_draw* 
         factorio_solution_init(&context->factorio_solution_draw, draw->fdb.instances[i].params, sol);
         return true;
     }
+    
+    font_draw_string(&context->fonts, context->font_sans, "Choose instance:"_arr, p, Palette::BLACK, nullptr, &p.y);    
+    p.y += font_sans.newline * 0.5;
+    p.x += font_sans.space * 2;
     
     for (s64 i = 0; i < draw->fdb.instances.size; ++i) {
         Factorio_instance i_inst = draw->fdb.instances[i];
@@ -568,8 +553,8 @@ bool factorio_db_choose_params_draw(Application* context, Factorio_params_draw* 
         for (s64 j = -1; j < draw->fdb.solutions.size; ++j) {
             if (j >= 0 and not array_equal(draw->fdb.solutions[j].instance_name, i_inst.name)) continue;
 
-            u8 flags = application_clickable(context, "choose_instance,solution"_arr, {(u64)i, (u64)j});
-            if (flags & Application::CLICK_RECT_CLICKED) {
+            u32 flags = gui_pointable(&context->gui, "choose_instance,solution"_arr, {i, j});
+            if (flags & Gui::EVENT_CLICKED) {
                 draw->current_solution = j;
             }
         }
@@ -584,14 +569,19 @@ bool factorio_db_choose_params_draw(Application* context, Factorio_params_draw* 
             font_metrics_string_get(&context->fonts, context->font_sans, name, &w_name);
             wsol += w_name + font_sans.space;
 
-            application_clickable(context, "choose_instance,solution"_arr, {(u64)i, (u64)j}, vv, {w_name, font_sans.height});
+            gui_pointable(&context->gui, "choose_instance,solution"_arr, {i, j}, vv, {w_name, font_sans.height});
 
             font_draw_string(&context->fonts, context->font_sans, name, vv, c);
         }
         v.y += font_sans.newline;
 
+        if (draw->current_instance == i) {
+            gui_button(&context->gui, "choose_instance,instance_go"_arr, {i}, v, "Show"_arr, 0.f, nullptr, &v.y);
+            v.y += font_sans.newline - font_sans.height;
+        }
+        
         Vec2 click_r {v.x + max(w0, w1), v.y - p.y};
-        application_clickable(context, "choose_instance,instance"_arr, {(u64)i}, p, click_r, 0.02f);
+        gui_pointable(&context->gui, "choose_instance,instance"_arr, {i}, p, click_r, 0.02f);
         if (draw->current_instance == i) {
             shape_rectangle(&context->shapes, p, click_r, Palette::BGBLUE, 0.03f);
         }
@@ -644,19 +634,18 @@ void application_init(Application* context) {
 
     context->font_solution = font_instantiate(&context->fonts, context->font_sans_base);
 
-    // Initialise the shapes
+    // Initialise the shapes and gui
     shape_init(&context->shapes, &context->assets);
+    gui_init(&context->gui, &context->assets, &context->fonts, context->font_sans);
+    
     
     // Now we load our shaders
     context->spline = opengl_shader_assets(&context->assets, "spline"_arr);
 }
 
 void application_render(Application* context) {
-    for (auto& r: context->clickable) {
-        r.flags |= Application::CLICK_RECT_DEAD;
-        r.flags &= ~Application::CLICK_RECT_CLICKED;
-    }
-
+    gui_frame_init(&context->gui);
+    
     for (Key i: context->input_queue) {
         if (i.type == Key::SPECIAL and i.special == Key::C_QUIT) {
             exit(0);
@@ -668,28 +657,11 @@ void application_render(Application* context) {
             factorio_solution_frame_change(&context->factorio_solution_draw, 1000000);
         } else if (i.type == Key::SPECIAL and i.special == Key::HOME) {
             factorio_solution_frame_change(&context->factorio_solution_draw, -1000000);
-            
-        } else if (i.type == Key::MOUSE) {
-            u8 action; s64 x, y;
-            i.get_mouse_param(&action, &x, &y);
-            
-            float best_z = 1.f;
-            Application::Click_rect* best_r = nullptr;
-            for (auto& r: context->clickable) {
-                if (x < r.p.x or y < r.p.y or x >= r.p.x+r.size.x or y >= r.p.y+r.size.y) continue;
-                if (r.z <= best_z) { best_z = r.z; best_r = &r; }
-            }
-
-            if (best_r and action == Key::LEFT_DOWN) {
-                best_r->flags |= Application::CLICK_RECT_CLICKED;
-                best_r->flags ^= Application::CLICK_RECT_CLICKED_TOGGLE;
-            } else if (best_r and action == Key::RIGHT_DOWN) {
-                best_r->flags |= Application::CLICK_RECT_CLICKED_RIGHT;
-            }
-            
         } else if (i.type == Key::SPECIAL and i.special == Key::F4) {
             context->factorio_solution_draw.inst.debug_explain_vars_raw ^= true;
-        } 
+        } else {
+            gui_process_input(&context->gui, i);
+        }
     }
     context->input_queue.size = 0;
     
@@ -709,15 +681,7 @@ void application_render(Application* context) {
     if (context->state == Application::DRAW_SOLUTION) {
         context->factorio_solution_draw.pad = pad;
         factorio_solution_draw(context, &context->factorio_solution_draw, padd, screen - 2*padd);
-        
     }
-    
-    {s64 i_out = 0;
-    for (auto& r: context->clickable) {
-        if (r.flags & Application::CLICK_RECT_DEAD) continue;
-        context->clickable[i_out++] = r;
-    }
-    context->clickable.size = i_out;}
     
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -730,6 +694,7 @@ void application_render(Application* context) {
     glClear(GL_DEPTH_BUFFER_BIT);
     
     shape_frame_draw(&context->shapes, context->screen_w, context->screen_h);
+    gui_frame_draw  (&context->gui,    context->screen_w, context->screen_h);
     font_frame_draw (&context->fonts,  context->screen_w, context->screen_h);
 }
 

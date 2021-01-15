@@ -670,7 +670,7 @@ int main(int argc, char** argv) {
     XSetWindowAttributes window_attrs = {};
     window_attrs.colormap = XCreateColormap(display, DefaultRootWindow(display), visual->visual, AllocNone); // Apparently you need the colormap, else XCreateWindow gives a BadMatch error. No worries, this fact features prominently in the documentation and it was no bother at all.
     window_attrs.event_mask = ExposureMask | KeyPressMask | KeyReleaseMask | ButtonPressMask
-        | ButtonReleaseMask | StructureNotifyMask /*| PointerMotionMask*/ | FocusChangeMask;
+        | ButtonReleaseMask | StructureNotifyMask | PointerMotionMask | FocusChangeMask;
 
     Window window = XCreateWindow(display, DefaultRootWindow(display), 0, 0, 1300, 800, 0,
         visual->depth, InputOutput, visual->visual, CWColormap | CWEventMask, &window_attrs); // We pass a type of InputOutput explicitly, as visual->c_class is an illegal value for some reason. A good reason, I hope.
