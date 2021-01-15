@@ -913,6 +913,9 @@ void factorio_balancer(Sat_instance* inst, Factorio_params params) {
 
 void factorio_clauses_from_diagram(Sat_instance* inst, Array_t<u8> text) {
     using namespace Sat;
+
+    s64 nx = hashmap_get(&inst->params, Factorio::fpar_nx);
+    s64 ny = hashmap_get(&inst->params, Factorio::fpar_ny);
     
     s64 x = 0, y = 0;
     for (s64 i = 0; i < text.size; i += 2) {
@@ -924,13 +927,19 @@ void factorio_clauses_from_diagram(Sat_instance* inst, Array_t<u8> text) {
         if (c0 == '\n') {
             x = 0; ++y; --i; continue;
         }
+
+        if (x >= nx or y >= ny) {
+            fprintf(stderr, "Error: index (%lld,%lld) out of bounds (nx=%lld,ny=%lld)\n", x, y, nx, ny);
+            fprintf(stderr, "Error: while parsing diagram\n");
+            exit(7);
+        }
         
         u64 type = f.belt;
         
         switch (c0) {
-        case '^': sat_add(inst, clause, {f.dirs[2].inp}); break;
+        case 'v': sat_add(inst, clause, {f.dirs[2].inp}); break;
         case '>': sat_add(inst, clause, {f.dirs[3].inp}); break;
-        case 'v': sat_add(inst, clause, {f.dirs[0].inp}); break;
+        case '^': sat_add(inst, clause, {f.dirs[0].inp}); break;
         case '<': sat_add(inst, clause, {f.dirs[1].inp}); break;
         case 'u': type = f.under; break;
         case 'S': type = f.split; break;
@@ -938,9 +947,9 @@ void factorio_clauses_from_diagram(Sat_instance* inst, Array_t<u8> text) {
         default: assert(false);
         }
         switch (c1) {
-        case '^': sat_add(inst, clause, {f.dirs[0].out}); break;
+        case 'v': sat_add(inst, clause, {f.dirs[0].out}); break;
         case '>': sat_add(inst, clause, {f.dirs[1].out}); break;
-        case 'v': sat_add(inst, clause, {f.dirs[2].out}); break;
+        case '^': sat_add(inst, clause, {f.dirs[2].out}); break;
         case '<': sat_add(inst, clause, {f.dirs[3].out}); break;
         case 'u': type = f.under; break;
         case '.': type = f.empty; break;

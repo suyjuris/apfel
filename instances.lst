@@ -7,3 +7,15 @@ solution simple1 sol1 {
     .>S>.>
     ..S>.>
 }
+
+instance 1to3 {
+    nx = 4, ny = 5, scale_fac = 1, do_blocking = 0,
+    yoff_output = [1], yoff_input = [0, 1, 2]    
+}
+solution 1to3 sol1 {
+    ....S>.>
+    .>S>S>.>
+    .>S>S>.>
+    .^..S>.v
+    .^.<.<.<
+}

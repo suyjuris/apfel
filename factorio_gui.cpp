@@ -142,7 +142,7 @@ void factorio_solution_draw_image(Application* context, Factorio_solution_draw* 
             
             s64 dir_inp = -1;
             s64 dir_out = -1;
-            
+
             for (Dir d: f.dirs) {
                 u8 dd = d.dir - Dir::BEG;
                 float arr[4] = {0, 1, 0, -1};
@@ -161,7 +161,8 @@ void factorio_solution_draw_image(Application* context, Factorio_solution_draw* 
                 if (out) shape_arrowhead(&context->shapes, dp,  v1 * border_size/2 * arrow_fac, fill);
                 if (sid) {
                     Color fill2 = iserr ? Palette::RED : lerp(Palette::BLUE, Palette::BGBLUE, 0.3f);
-                    Vec2 w = v2 * size * 0.8f + v1 * border_size * 0.15f;
+                    float thickness = border_size * 0.15f;
+                    Vec2 w = v2 * (0.5f * (size + center_size) + thickness) + v1 * thickness;
                     shape_rectangle(&context->shapes, dp - w / 2.f, w, fill2);
                 }
 
@@ -227,9 +228,9 @@ void factorio_solution_draw_image(Application* context, Factorio_solution_draw* 
 
                     Vec2 v = pi + border_size + border_pad;
                     v.x += i * bar_w;
-                    v.y += center_size * (arr.size-1 - j) / n_lines;
+                    v.y += center_size * (arr.size-1 - j) / arr.size;
 
-                    shape_rectangle(&context->shapes, v, {bar_w, center_size / n_lines - .5f}, col);
+                    shape_rectangle(&context->shapes, v, {bar_w, center_size / arr.size - .5f}, col);
                 }
             }
         }
