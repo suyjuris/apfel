@@ -6,6 +6,9 @@
 #error "You did not compile the right file."
 #endif
 
+#include <unistd.h>
+#include <poll.h>
+
 #include "hashmap.cpp"
 #include "asset.cpp"
 #include "opengl.cpp"
@@ -41,6 +44,18 @@ struct Factorio_params_draw {
     s64 current_solution = -1;
 };
 
+struct Factorio_solver_draw {
+    Sat_instance inst;
+    Sat_dimacs dimacs;
+    pid_t solver_pid;
+    int output_fd;
+    u64 next_check;
+    Array_dyn<u8> output_data;
+    Array_dyn<u32> codepoint_temp;
+    Array_dyn<s32> lines;
+    Array_dyn<s64> output_lits;
+};
+
 // Keeps the necessary data to manage OpenGL and other data for the uil layer
 struct Application {
     // Data required by the platform layer
@@ -64,12 +79,13 @@ struct Application {
     Shape_drawer shapes;
 
     enum Application_state: u8 {
-        CHOOSE_PARAMS = 0, DRAW_SOLUTION
+        CHOOSE_PARAMS = 0, RUN_SOLVER, DRAW_SOLUTION
     };
     u8 state = CHOOSE_PARAMS;
     
     Factorio_params_draw factorio_params_draw;
     Factorio_solution_draw factorio_solution_draw;
+    Factorio_solver_draw factorio_solver_draw;
 };
 
 void factorio_solution_draw_image(Application* context, Factorio_solution_draw* draw, Vec2 p, float* x_out, float* y_out) {
@@ -230,7 +246,7 @@ void factorio_solution_draw_image(Application* context, Factorio_solution_draw* 
                     v.x += i * bar_w;
                     v.y += center_size * (arr.size-1 - j) / arr.size;
 
-                    shape_rectangle(&context->shapes, v, {bar_w, center_size / arr.size - .5f}, col);
+                    shape_rectangle(&context->shapes, v, {bar_w - .5f, center_size / arr.size - .5f}, col);
                 }
             }
         }
@@ -242,6 +258,7 @@ void factorio_solution_draw_image(Application* context, Factorio_solution_draw* 
 
 void factorio_solution_draw_detail(Application* context, Factorio_solution_draw* draw, Vec2 p) {
     s64 n_linedim = hashmap_get(&draw->inst.params, Factorio::fpar_n_linedim);
+    bool do_block = hashmap_get(&draw->inst.params, Factorio::fpar_do_block);
 
     auto font_sans = font_instance_get(&context->fonts, context->font_sans);
 
@@ -339,7 +356,9 @@ void factorio_solution_draw_detail(Application* context, Factorio_solution_draw*
         do_line(context->string_temp, f.line_first | (i << 8));
     }
     do_line("sum"_arr,   f.line_sum);
-    do_line("block"_arr, f.line_block);
+    if (do_block) {
+        do_line("block"_arr, f.line_block);
+    }
 }
 
 void factorio_solution_draw_props(Application* context, Factorio_solution_draw* draw, Vec2 pos, Vec2 size) {
@@ -469,7 +488,7 @@ void factorio_solution_init(Factorio_solution_draw* draw, Factorio_params p, Fac
             return array_cmp(array_subarray(text_temp, 0, index), array_subarray(text_temp, index)) < 0;
         });
     }
-
+    
     {Array_dyn<u8> human;
     defer { array_free(&human); };
     sat_write_human(&draw->inst, &human);
@@ -478,7 +497,63 @@ void factorio_solution_init(Factorio_solution_draw* draw, Factorio_params p, Fac
     fclose(f);}
 }
 
-bool factorio_db_choose_params_draw(Application* context, Factorio_params_draw* draw, Sat_instance* into_inst, Vec2 p) {
+void factorio_solver_init(Factorio_solver_draw* draw, Factorio_params p) {
+    sat_init(&draw->inst);
+    factorio_balancer(&draw->inst, p);
+
+    sat_write_dimacs(&draw->inst, &draw->dimacs);
+
+    {FILE* f = fopen("dimacs.out", "w");
+    fwrite(draw->dimacs.text.data, 1, draw->dimacs.text.size, f);
+    fclose(f);}
+
+    int pipe_solver_to  [2] = {};
+    int pipe_solver_from[2] = {};
+    if (pipe(pipe_solver_to  )) goto error;
+    if (pipe(pipe_solver_from)) goto error;
+    
+    {pid_t pid = fork();
+    if (pid == 0) {
+        if (dup2(pipe_solver_to[0],   STDIN_FILENO)  == -1) goto error;
+        if (dup2(pipe_solver_from[1], STDOUT_FILENO) == -1) goto error;
+        if (dup2(pipe_solver_from[1], STDERR_FILENO) == -1) goto error;
+        if (platform_close_try(pipe_solver_to[1])) goto error;
+        if (platform_close_try(pipe_solver_from[0])) goto error;
+        
+        {char* argv[] = {"kissat", nullptr};
+        execvp("kissat", argv);
+        platform_error_printf("$ while trying to execute solver in child");
+        platform_error_print();
+        exit(12);}
+    } else if (pid != -1) {
+        draw->solver_pid = pid;
+        draw->output_fd = pipe_solver_from[0];
+        draw->next_check = 0;
+        
+        if (platform_read_all_try(draw->output_fd, &draw->output_data)) goto error2;
+        if (platform_write_try(pipe_solver_to[1], draw->dimacs.text)) goto error2;
+        if (platform_close_try(pipe_solver_to[1])) goto error2;
+    } else {
+        goto error3;
+    }}
+
+    return;
+
+  error:
+    platform_error_printf("$ while initialising child");
+    platform_error_print();
+    exit(8);
+  error2:
+    platform_error_printf("$ while talking to the child");
+    platform_error_print();
+    exit(9);
+  error3:
+    platform_error_printf("$ while trying to fork");
+    platform_error_print();
+    exit(15);
+}
+
+void factorio_db_choose_params_draw(Application* context, Factorio_params_draw* draw, Sat_instance* into_inst, Vec2 p) {
     auto font_sans = font_instance_get(&context->fonts, context->font_sans);
     
 
@@ -489,30 +564,57 @@ bool factorio_db_choose_params_draw(Application* context, Factorio_params_draw* 
         if (name_w < w) name_w = w;
     }
 
-    bool instance_was_chosen = false;
+    bool action_draw_instance = false;
+    bool action_run_solver = false;
     for (s64 i = 0; i < draw->fdb.instances.size; ++i) {
         {u32 flags = gui_pointable(&context->gui, "choose_instance,instance"_arr, {i});
         if (flags & Gui::EVENT_CLICKED) {
             draw->current_instance = i;
         }}
-        {u32 flags = gui_pointable(&context->gui, "choose_instance,instance_go"_arr, {i});
+        {u32 flags = gui_pointable(&context->gui, "choose_instance,instance_show"_arr, {i});
         if (flags & Gui::EVENT_CLICKED) {
             draw->current_instance = i;
-            instance_was_chosen = true;
+            action_draw_instance = true;
+            break;
+        }}
+        {u32 flags = gui_pointable(&context->gui, "choose_instance,instance_run"_arr, {i});
+        if (flags & Gui::EVENT_CLICKED) {
+            draw->current_instance = i;
+            action_run_solver = true;
             break;
         }}
     }
 
-    if (instance_was_chosen) {
+    if (action_draw_instance) {
         s64 i = draw->current_instance;
         Factorio_solution* sol = draw->current_solution >= 0 ? &draw->fdb.solutions[i] : nullptr;
         factorio_solution_init(&context->factorio_solution_draw, draw->fdb.instances[i].params, sol);
-        return true;
+        context->state = Application::DRAW_SOLUTION;
+        return;
+    }
+    if (action_run_solver) {
+        s64 i = draw->current_instance;
+        factorio_solver_init(&context->factorio_solver_draw, draw->fdb.instances[i].params);
+        context->state = Application::RUN_SOLVER;
+        return;
     }
     
     font_draw_string(&context->fonts, context->font_sans, "Choose instance:"_arr, p, Palette::BLACK, nullptr, &p.y);    
     p.y += font_sans.newline * 0.5;
     p.x += font_sans.space * 2;
+    
+    for (s64 i = 0; i < draw->fdb.instances.size; ++i) {
+        Factorio_instance i_inst = draw->fdb.instances[i];
+        for (s64 j = -1; j < draw->fdb.solutions.size; ++j) {
+            if (j >= 0 and not array_equal(draw->fdb.solutions[j].instance_name, i_inst.name)) continue;
+
+            u32 flags = gui_pointable(&context->gui, "choose_instance,solution"_arr, {i, j});
+            if (flags & Gui::EVENT_CLICKED) {
+                draw->current_instance = i;
+                draw->current_solution = j;
+            }
+        }
+    }
     
     for (s64 i = 0; i < draw->fdb.instances.size; ++i) {
         Factorio_instance i_inst = draw->fdb.instances[i];
@@ -551,48 +653,136 @@ bool factorio_db_choose_params_draw(Application* context, Factorio_params_draw* 
         font_draw_string(&context->fonts, context->font_sans, "Solution: "_arr, v, Palette::BLACK, &wsol);
         wsol -= v.x;
 
-        for (s64 j = -1; j < draw->fdb.solutions.size; ++j) {
-            if (j >= 0 and not array_equal(draw->fdb.solutions[j].instance_name, i_inst.name)) continue;
-
-            u32 flags = gui_pointable(&context->gui, "choose_instance,solution"_arr, {i, j});
-            if (flags & Gui::EVENT_CLICKED) {
-                draw->current_solution = j;
-            }
-        }
+        bool anyhover = false;
         for (s64 j = -1; j < draw->fdb.solutions.size; ++j) {
             if (j >= 0 and not array_equal(draw->fdb.solutions[j].instance_name, i_inst.name)) continue;
 
             Array_t<u8> name = j >= 0 ? draw->fdb.solutions[j].name : "none"_arr;
-            Color c = j == draw->current_solution ? Palette::RED : Palette::BLACK;
 
             Vec2 vv = {v.x+wsol, v.y};
             float w_name;
             font_metrics_string_get(&context->fonts, context->font_sans, name, &w_name);
             wsol += w_name + font_sans.space;
 
-            gui_pointable(&context->gui, "choose_instance,solution"_arr, {i, j}, vv, {w_name, font_sans.height});
+            u32 flags = gui_pointable(&context->gui, "choose_instance,solution"_arr, {i, j}, vv, {w_name, font_sans.height});
+            
+            Color c = i == draw->current_instance and j == draw->current_solution ? Palette::RED :
+                flags & Gui::DRAW_ACTIVE ? lerp(Palette::REDLIGHT, Palette::BLACK, 0.6f)
+                : Palette::BLACK;
+            anyhover |= flags & Gui::DRAW_ACTIVE;
 
             font_draw_string(&context->fonts, context->font_sans, name, vv, c);
         }
         v.y += font_sans.newline;
 
+        {Vec2 vv = v;
         if (draw->current_instance == i) {
-            gui_button(&context->gui, "choose_instance,instance_go"_arr, {i}, v, "Show"_arr, 0.f, nullptr, &v.y);
+            gui_button(&context->gui, "choose_instance,instance_show"_arr, {i}, vv, "Show"_arr, 0.f, &vv.x, nullptr);
+            gui_button(&context->gui, "choose_instance,instance_run"_arr, {i}, vv, "Run solver"_arr, 0.f, nullptr, &v.y);
             v.y += font_sans.newline - font_sans.height;
-        }
+        }}
         
         Vec2 click_r {v.x + max(w0, w1), v.y - p.y};
-        gui_pointable(&context->gui, "choose_instance,instance"_arr, {i}, p, click_r, 0.02f);
+        {u32 flags = gui_pointable(&context->gui, "choose_instance,instance"_arr, {i}, p, click_r, 0.02f);
         if (draw->current_instance == i) {
             shape_rectangle(&context->shapes, p, click_r, Palette::BGBLUE, 0.03f);
-        }
+        } else if ((flags & Gui::DRAW_ACTIVE) or anyhover) {
+            shape_rectangle(&context->shapes, p, click_r, lerp(Palette::BGBLUE, Palette::BG, 0.6f), 0.03f);            
+        }}
         
         p.y = v.y + font_sans.newline * 0.25f;
     }
-
-    return false;
 }
 
+void factorio_solver_doinput(Factorio_solver_draw* draw) {
+    if (platform_now() + 1000000 >= draw->next_check) {
+        pollfd pfd {draw->output_fd, POLLIN, 0};
+        int code = poll(&pfd, 1, 0);
+        if (code > 0) {
+            if (pfd.revents & POLLIN) {
+                if (platform_read_all_try(draw->output_fd, &draw->output_data)) goto error;
+            }
+            if (pfd.revents & POLLHUP) {
+                if (platform_close_try(draw->output_fd)) goto error;
+                if (draw->output_data.size and draw->output_data.back() != '\n') {
+                    array_push_back(&draw->output_data, '\n');
+                }
+                array_printf(&draw->output_data, "Exited.\n");
+                draw->output_fd = -1;
+            }
+            if (pfd.revents & POLLERR) {
+                fprintf(stderr, "Warning: polling returned POLLERR, I do not know how to handle this\n");
+            }
+            draw->next_check = 0;
+        } else if (code == 0) {
+            draw->next_check = platform_now() + 1000 * 1000 * 1000;
+        } else {
+            platform_error_printf("$ while trying to call poll");
+            platform_error_print();
+            exit(10);
+        }
+    }
+    platform_redraw(draw->next_check);
+
+    {s64 last = 0;
+    s64 i_out = 0;
+    for (s64 i = 0; i < draw->output_data.size; ++i) {
+        if (draw->output_data[i] == '\n') {
+            if (draw->output_data[last] == 'v') {
+                s64 val = 0;
+                bool isneg = false;
+                for (s64 j = last+2; j < i; ++j) {
+                    u8 c = draw->output_data[j];
+                    if (c == '-') {
+                        isneg ^= true;
+                    } else if ('0' <= c and c <= '9') {
+                        val = 10 * val + (c - '0');
+                    } else if (c == ' ') {
+                        if (val) {
+                            array_push_back(&draw->output_lits, isneg ? -val : val);
+                            val = 0; isneg = false;
+                        }
+                    }
+                }
+            } else {
+                memcpy(&draw->output_data[i_out], &draw->output_data[last], i+1 - last);
+                i_out += i+1 - last;
+            }
+            last = i+1;
+        }
+    }
+    draw->output_data.size = i_out;}
+    
+    return;
+  error:
+    platform_error_print();
+    exit(11);
+}
+
+void factorio_solver_draw(Application* context, Factorio_solver_draw* draw, Vec2 p) {
+    if (draw->output_fd != -1) {
+        factorio_solver_doinput(draw);
+    }
+
+    {s64 last = 0;
+    for (s64 i = 0; i < draw->output_data.size; ++i) {
+        if (draw->output_data[i] == '\n') {
+            auto str = array_subarray(draw->output_data, last, i);
+            u32 word = font_word_create_utf8(&context->fonts, context->font_sans, str);
+            array_push_back(&draw->lines, word);
+            last = i+1;
+        }
+    }
+    memcpy(draw->output_data.data, draw->output_data.data + last, draw->output_data.size - last);
+    draw->output_data.size -= last;}
+
+    auto font_sans = font_instance_get(&context->fonts, context->font_sans);
+    p.y += font_sans.ascent;
+    for (s64 word: draw->lines) {
+        font_draw_word(&context->fonts, word, p, Palette::BLACK);
+        p.y += font_sans.newline;
+    }
+}
 
 void factorio_solution_frame_change(Factorio_solution_draw* draw, s64 diff) {
     draw->anim_frame = min(max(draw->anim_frame + diff, 0ll), draw->anim_indices.size-1);
@@ -674,10 +864,12 @@ void application_render(Application* context) {
     Vec2 padd = {pad, pad};
 
     if (context->state == Application::CHOOSE_PARAMS) {
-        bool done = factorio_db_choose_params_draw(
+        factorio_db_choose_params_draw(
             context, &context->factorio_params_draw, &context->factorio_solution_draw.inst, padd
         );
-        if (done) context->state = Application::DRAW_SOLUTION;
+    }
+    if (context->state == Application::RUN_SOLVER) {
+        factorio_solver_draw(context, &context->factorio_solver_draw, padd);
     }
     if (context->state == Application::DRAW_SOLUTION) {
         context->factorio_solution_draw.pad = pad;

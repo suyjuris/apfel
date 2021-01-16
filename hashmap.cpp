@@ -180,6 +180,14 @@ void hashmap_clear(Hashmap<T>* map) {
     }
 }
 
+template <typename T>
+void hashmap_free(Hashmap<T>* map) {
+    array_free(&map->slots);
+    map->size = 0;
+}
+
+
+
 static inline u64 _hash_rotate_left(u64 x, int k) {
 	return (x << k) | (x >> (64 - k));
 }

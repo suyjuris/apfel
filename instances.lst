@@ -19,3 +19,8 @@ solution 1to3 sol1 {
     .^..S>.v
     .^.<.<.<
 }
+
+instance 2to5 {
+    nx = 4, ny = 5, scale_fac = 2, do_blocking = 0,
+    yoff_output = [1, 2], yoff_input = [0, 1, 2, 3, 4]
+}

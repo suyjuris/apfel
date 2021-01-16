@@ -467,6 +467,26 @@ int platform_read_try(int fd, Array_t<u8> buf) {
     return 0;
 }
 
+int platform_read_all_try(int fd, Array_dyn<u8>* buf) {
+    while (true) {
+        if (buf->capacity < buf->size + 256) {
+            array_reserve(buf, buf->size + 256);
+        }
+        
+        s64 bytes_read = read(fd, buf->data + buf->size, buf->capacity - buf->size);
+        if (bytes_read == -1) {
+            bool wouldblock = errno == EWOULDBLOCK || errno == EAGAIN;
+            platform_error_printf("$ while calling read()");
+            return wouldblock ? Platform::READ_WOULDBLOCK : Platform::READ_ERROR;
+        }
+        buf->size += bytes_read;
+
+        if (buf->size < buf->capacity) break;
+    }
+    
+    return 0;
+}
+
 int platform_seek_try(int fd, u64 offset, u8 whence, u64* out_offset) {
     int w = SEEK_SET;
     switch (whence) {

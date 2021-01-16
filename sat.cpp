@@ -431,8 +431,9 @@ void sat_add(Sat_instance* inst, u64 op, Array_t<u64> args) {
 
     array_push_back(&inst->constraint_context, inst->context_stack.back());
 
-    auto args_copy = array_subindex(inst->constraint_offsets, inst->constraint_data, index);
-    args_copy = array_subarray(args_copy, 1, args_copy.size);
+    s64 args_copy_i = inst->rewrite_temp.size;
+    array_append(&inst->rewrite_temp, args);
+    auto args_copy = array_subarray(inst->rewrite_temp, args_copy_i);
 
     s64 func_index = ((subtype - Sat::CONSTRAINT) >> 56) - 1;
     (*inst->rewrite_funcs[func_index])(inst, op, args_copy);
@@ -712,6 +713,12 @@ void sat_write_dimacs(Sat_instance* inst, Sat_dimacs* dimacs) {
         }
         array_printf(&dimacs->text, "0\n");
     }
+}
+
+void sat_dimacs_free(Sat_dimacs* dimacs) {
+    hashmap_free(&dimacs->map_forth);
+    array_free(&dimacs->map_back);
+    array_free(&dimacs->text);
 }
 
 void sat_write_human(Sat_instance* inst, Array_dyn<u8>* into) {

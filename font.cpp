@@ -658,7 +658,10 @@ u32 font_word_create(Font_data* fonts, s64 font_instance, Array_t<u32> codepoint
     u32 offset = 0;
     for (u32 c: codepoints) {
         Font_data::Glyph_handle handle = _font_glyph_get_handle(fonts, inst.info, c);
-        if (handle.index >= 0xfffe) continue;
+        if (handle.index >= 0xfffe) {
+            offset += handle.advance;
+            continue;
+        }
         Font_data::Glyph g = fonts->glyphs[handle.index];
         
         s64 i0 = counts_tmp[g.type0-1]++;
@@ -680,6 +683,20 @@ u32 font_word_create(Font_data* fonts, s64 font_instance, Array_t<u32> codepoint
     return word ^ Font_data::MAGIC_WORD;
 }
 
+void _font_utf8_to_codepoints(Array_t<u8> str, Array_dyn<u32>* into) {
+    for (s64 i = 0; i < str.size;) {
+        u32 c = -1;
+        i += _font_decode_utf8(array_subarray(str, i, str.size), &c);
+        array_push_back(into, c);
+    }
+}
+
+u32 font_word_create_utf8(Font_data* fonts, s64 font_instance, Array_t<u8> word) {
+    Array_dyn<u32>* buf = &fonts->buf_codepoints;
+    buf->size = 0;
+    _font_utf8_to_codepoints(word, buf);
+    return font_word_create(fonts, font_instance, *buf);
+}
 
 void font_draw_word(Font_data* fonts, u32 word, Vec2 pos_baseline, Color fill, float* out_advance=nullptr) {
     word ^= Font_data::MAGIC_WORD;
@@ -912,15 +929,6 @@ void font_fmt_end(Font_data* fonts, u64 flags) {
     }
     
     fonts->text_current_flags &= ~flags;
-}
-
-
-void _font_utf8_to_codepoints(Array_t<u8> str, Array_dyn<u32>* into) {
-    for (s64 i = 0; i < str.size;) {
-        u32 c = -1;
-        i += _font_decode_utf8(array_subarray(str, i, str.size), &c);
-        array_push_back(into, c);
-    }
 }
 
 void font_fmt_text(Font_data* fonts, u64 flags_add, Array_t<u8> str) {

@@ -188,6 +188,7 @@ int platform_open_try(Array_t<u8> path, u64 flags, u32 mode, int* out_fd);
 int platform_request_lock_try(int fd, bool* out_success);
 int platform_write_try(int fd, Array_t<u8> buf);
 int platform_read_try (int fd, Array_t<u8> buf);
+int platform_read_all_try(int fd, Array_dyn<u8>* buf);
 int platform_seek_try(int fd, u64 offset, u8 whence, u64* out_offset=nullptr);
 int platform_truncate_try(int fd, u64 size);
 int platform_close_try(int fd);
