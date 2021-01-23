@@ -4,6 +4,11 @@
 #include "global.hpp"
 #endif
 
+#ifdef HASHMAP_TEST
+#define assert_nofuzz(x) (void)(x)
+#else
+#define assert_nofuzz(x) assert((x))
+#endif
 
 template <typename T>
 struct Hashmap {
@@ -104,11 +109,8 @@ void hashmap_selfcheck(Hashmap<u64>* map) {
 
 template <typename T, typename V>
 void hashmap_set(Hashmap<T>* map, u64 key, V val_) {
-#ifndef HASHMAP_TEST
-    assert(key != map->empty);
-#else
+    assert_nofuzz(key != map->empty);
     if (key == map->empty) return;
-#endif
 
     T val = val_;
     if (map->size * 5 >= map->slots.size * 3) _hashmap_enlarge(map);
@@ -124,15 +126,12 @@ void hashmap_set(Hashmap<T>* map, u64 key, V val_) {
         if (i.key == key) { i.val = val; flag = true; break; }
     }
     if (not flag) array_push_back(&map->check, {key, val});
-    hashmap_selfcheck(map);
 #endif
 }
 
 template <typename T>
 T* hashmap_getptr(Hashmap<T>* map, u64 key) {
-#ifndef HASHMAP_TEST
-    assert(key != map->empty);
-#endif
+    assert_nofuzz(key != map->empty);
     if (key == map->empty) return nullptr;
 
     bool slot_empty;
@@ -156,9 +155,7 @@ T hashmap_get(Hashmap<T>* map, u64 key) {
 
 template <typename T>
 T* hashmap_getcreate(Hashmap<T>* map, u64 key, T init={}) {
-#ifndef HASHMAP_TEST
-    assert(key != map->empty);
-#endif
+    assert_nofuzz(key != map->empty);
     if (key == map->empty) return nullptr;
     if (map->size * 5 >= map->slots.size * 3) _hashmap_enlarge(map);
 
@@ -171,6 +168,44 @@ T* hashmap_getcreate(Hashmap<T>* map, u64 key, T init={}) {
     }
     
     return &map->slots[slot].val;
+}
+
+template <typename T>
+T hashmap_delete(Hashmap<T>* map, u64 key) {
+    assert_nofuzz(key != map->empty);
+    if (key == map->empty) return {};
+    
+    bool slot_empty;
+    s64 slot = _hashmap_slot_find(map, key, &slot_empty);
+    assert_nofuzz(not slot_empty);
+    if (slot_empty) return {};
+    T result = map->slots[slot].val;
+
+    s64 empty = slot;
+    for (s64 i = 1; i < map->slots.size; ++i) {
+        s64 slot_i = (slot + i) & (map->slots.size-1);
+        s64 key_i = map->slots[slot_i].key;
+        if (key_i == map->empty) break;
+        s64 slot_base = _hashmap_slot_base(map->slots.size, key_i) & (map->slots.size-1);
+        if (((empty - slot_base) & (map->slots.size-1)) <= ((slot_i - slot_base) & (map->slots.size-1))) {
+            map->slots[empty] = map->slots[slot_i];
+            empty = slot_i;
+        }
+    }
+    map->slots[empty].key = map->empty;
+    --map->size;
+
+#ifdef HASHMAP_TEST
+    for (s64 i = 0; i < map->check.size; ++i) {
+        if (map->check[i].key == key) {
+            assert(map->check[i].val == result);
+            map->check[i] = map->check[map->check.size-1];
+            --map->check.size;
+        }
+    }
+#endif
+    
+    return result;
 }
 
 template <typename T>
@@ -219,7 +254,7 @@ u64 hash_str(Array_t<u8> str) {
 }
 
 u64 hash_arr(Array_t<u64> arr) {
-    u64 x = 0xffdf38dd3e69bd91ull ^ arr.size;
+    u64 x = 0xefdf38dd3e69bd91ull ^ arr.size;
     for (u64 a: arr) x = hash_u64(a ^ x);
     return x;
 }
@@ -231,13 +266,27 @@ int main(int argc, char** argv) {
         char buf[4096] = {};
         int len = read(STDIN_FILENO, buf, sizeof(buf));
         for (int i = 0; i < len; i += 2) {
+#ifdef HASHMAP_VERBOSE
+            if      (buf[i] % 2 == 0) puts("--------------- set");
+            else if (buf[i] % 4 == 1) puts("--------------- delete");
+            else                      puts("--------------- getptr");
+            for (s64 i = 0; i < map.slots.size; ++i) {
+                printf("%02x,%02x ", (u8)map.slots[i].key, (u8)map.slots[i].val);
+            } puts("");
+#endif
             if (buf[i] % 2 == 0) {
                 hashmap_set(&map, buf[i+1], buf[i]);
             } else if (buf[i] % 4 == 1) {
-                hashmap_get(&map, buf[i+1]);
+                hashmap_delete(&map, buf[i+1]);
             } else {
                 hashmap_getptr(&map, buf[i+1]);
             }
+#ifdef HASHMAP_VERBOSE
+            for (s64 i = 0; i < map.slots.size; ++i) {
+                printf("%02x,%02x ", (u8)map.slots[i].key, (u8)map.slots[i].val);
+            } puts("");
+#endif
+            hashmap_selfcheck(&map);
         }
     } else {
         Hashmap<u64> map;
@@ -245,6 +294,13 @@ int main(int argc, char** argv) {
         for (s64 i = 1; i < 123; ++i) hashmap_set<u64>(&map, i, i*i*i);
         for (s64 i = 1; i < 123; ++i) {
             assert(hashmap_get(&map, i) == i*i*i);
+        }
+        for (s64 i = 7; i < 123; i += 7) {
+            assert(hashmap_delete(&map, i) == i*i*i);
+        }
+        for (s64 i = 1; i < 123; ++i) {
+            u64* p = hashmap_getptr(&map, i);
+            assert(i%7 ? *p == i*i*i : p == nullptr);
         }
     }    
 }

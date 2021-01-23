@@ -686,7 +686,7 @@ void sat_write_dimacs(Sat_instance* inst, Sat_dimacs* dimacs) {
             u64 var = lit >> 63 ? ~lit : lit;
 
             s64* mapped = hashmap_getcreate(&dimacs->map_forth, var, 0ll);
-            if (not *mapped) {
+            if (*mapped == 0) {
                 *mapped = dimacs->map_back.size;
                 array_push_back(&dimacs->map_back, var);
             }
@@ -702,14 +702,10 @@ void sat_write_dimacs(Sat_instance* inst, Sat_dimacs* dimacs) {
             bool neg = lit >> 63;
             u64 var = neg ? ~lit : lit;
 
-            s64* mapped = hashmap_getcreate(&dimacs->map_forth, var, 0ll);
-            if (not *mapped) {
-                *mapped = dimacs->map_back.size;
-                array_push_back(&dimacs->map_back, var);
-            }
+            s64 mapped = hashmap_get(&dimacs->map_forth, var);
 
-            s64 dilit = neg ? -*mapped : *mapped;
-            array_printf(&dimacs->text, "%d ", (int)dilit);
+            s64 dilit = neg ? -mapped : mapped;
+            array_printf(&dimacs->text, "%lld ", dilit);
         }
         array_printf(&dimacs->text, "0\n");
     }
@@ -763,7 +759,7 @@ struct Sat_solution {
     Hashmap<bool> values;
 
     u8 get(u64 lit) {
-        bool isneg = lit >> 63;
+        u64 isneg = lit >> 63;
         if (bool* val = hashmap_getptr(&values, lit^-isneg)) {
             return *val ^ isneg ? L_TRUE : L_FALSE;
         } else {
@@ -771,7 +767,7 @@ struct Sat_solution {
         }
     }
     void set(u64 lit) {
-        bool isneg = lit >> 63;
+        u64 isneg = lit >> 63;
         hashmap_set(&values, lit^-isneg, isneg ? false : true);
     }
     bool istrue (u64 lit) { return get(lit) == L_TRUE;  }
@@ -819,13 +815,16 @@ Sat_solution sat_solution_from_instance(
             bool retain = false;
             u64 prop = 0;
             bool flag = false;
+            bool clause_is_false = true;
             for (u64 lit: clause) {
                 switch (sol.get(lit)) {
                 case Sat_solution::L_FALSE: break;
                 case Sat_solution::L_TRUE:
+                    clause_is_false = false;
                     prop = 0; flag = true;
                     break;
                 case Sat_solution::L_UNASSIGNED: {
+                    clause_is_false = false;
                     if (prop) {
                         retain = true;
                         prop = 0; flag = true;
@@ -843,7 +842,11 @@ Sat_solution sat_solution_from_instance(
                 array_push_back(&mark_for_entry, prop);
                 if (out_props) array_push_back(out_props, {prop, i});
                 dirty = true;
+            } else if (clause_is_false) {
+                if (out_props) array_push_back(out_props, {Sat::var_false, i});
+                dirty = true;
             }
+            
             if (retain) {
                 clauses[i_out++] = i;
             }

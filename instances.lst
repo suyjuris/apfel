@@ -21,6 +21,14 @@ solution 1to3 sol1 {
 }
 
 instance 2to5 {
-    nx = 4, ny = 5, scale_fac = 2, do_blocking = 0,
-    yoff_output = [1, 2], yoff_input = [0, 1, 2, 3, 4]
+    nx = 6, ny = 6, scale_fac = 2, do_blocking = 0,
+    yoff_output = [3, 4], yoff_input = [ 1, 2, 3, 4, 5]
+}
+solution 2to5 sol1 {
+    .v.<.<.<.<..
+    .v..S>>u.^u>
+    .>S>S>S>.^S>
+    S>S>.>S>S>S>
+    S>.>.>.>S>S>
+    ..........S>
 }

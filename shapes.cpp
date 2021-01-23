@@ -174,11 +174,11 @@ void shape_init(Shape_drawer* shapes, Asset_store* assets) {
 }
 
 void shape_frame_draw(Shape_drawer* shapes, s64 screen_w, s64 screen_h) {
-    opengl_shader_use_and_set_origin(&shapes->circle, screen_w, screen_h);
-    opengl_shader_draw_and_clear(&shapes->circle, GL_TRIANGLES);
-
     opengl_shader_use_and_set_origin(&shapes->rectangle, screen_w, screen_h);
     opengl_shader_draw_and_clear(&shapes->rectangle, GL_TRIANGLES);
+
+    opengl_shader_use_and_set_origin(&shapes->circle, screen_w, screen_h);
+    opengl_shader_draw_and_clear(&shapes->circle, GL_TRIANGLES);
     
     opengl_shader_use_and_set_origin(&shapes->triangle, screen_w, screen_h);
     opengl_shader_draw_and_clear(&shapes->triangle, GL_TRIANGLES);

@@ -303,8 +303,8 @@ void factorio_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
         sat_push_add_pop(inst, {~f.under}, logical_and, {~f.underh, ~f.underv});
 
         for (Dir fd: f.dirs) {
-            // Input and output not on same side
-            sat_add(inst, at_most_one, {fd.inp, fd.out});
+            // Input and output not on same side (sideflag as well)
+            sat_add(inst, at_most_one, {fd.inp, fd.out, fd.sid});
 
             // Sideflags
             // A belt has sides everywhere it does not have inputs or outputs
@@ -312,9 +312,12 @@ void factorio_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
             sat_addg(inst, implies, {~fd.inp, ~fd.out}, {fd.sid});
             sat_push_add_pop(inst, {fd.sid}, logical_and, {~fd.inp, ~fd.out});
             sat_pop(inst);
-            // An undergrond belt has sides either horizontally or vertically
+            // An underground belt has sides either horizontally or vertically
             sat_push_add_pop(inst, {f.under}, equivalent, {fd.turnl().und, fd.sid});
-
+            // Empty tiles and splitters have no sides
+            sat_add(inst, implies, {f.empty, ~fd.sid});
+            sat_add(inst, implies, {f.split, ~fd.sid});
+            
             // Splitter flag causes straight flow
             sat_push_add_pop(inst, {f.split}, equivalent, {fd.back().inp, fd.out});
 
@@ -333,7 +336,10 @@ void factorio_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
                 // ... a splitter must have at least one input and at least one output connected
                 sat_push(inst, {f.splitl});
                 sat_add(inst, clause, {fd.move().back().inp, fd.move(1, 1).back().inp});
-                sat_add(inst, clause, {fd.move(0, -1).out,   fd.move(1, -1).out});                
+                sat_add(inst, clause, {fd.move(0, -1).out,   fd.move(1, -1).out}); 
+                // ... a splitter must have at least three (input or output) connected
+                sat_add(inst, at_most_one, {~fd.move().back().inp, ~fd.move(1, 1).back().inp,
+                                            ~fd.move(0, -1).out,   ~fd.move(1, -1).out}); 
                 sat_pop(inst);
 
                 // ... there cannot be two subsequent splitters
@@ -342,14 +348,16 @@ void factorio_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
             }; sat_pop(inst);
 
             // Non-splitters must have input and output connected
-            sat_push_add_pop(inst, {~f.split, ~f.empty}, equivalent, {fd.inp, fd.move().back().out});
-            sat_push_add_pop(inst, {~f.split, ~f.empty}, equivalent, {fd.out, fd.move().back().inp});
+            // This is not an equivalence, as the other tile may be a splitter
+            sat_push_add_pop(inst, {~f.split, ~f.empty}, implies, {fd.inp, fd.move().back().out});
+            sat_push_add_pop(inst, {~f.split, ~f.empty}, implies, {fd.out, fd.move().back().inp});
 
             // For underground lines, input/output direction determines underground direction
             sat_push(inst, {f.under});
             sat_add(inst, implies, {fd.inp, fd.und});
             sat_add(inst, implies, {fd.out, fd.und});
-            sat_addg(inst, implies, {fd.und}, {fd.inp, fd.out});
+            if (fd.dir == Dir::TOP or fd.dir == Dir::RIGHT)
+                sat_addg(inst, implies, {fd.und}, {fd.inp, fd.out, fd.back().inp, fd.back().out});
             sat_pop(inst);
         }        
 
@@ -415,11 +423,11 @@ void factorio_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
 
                 bool dobreak = false;
                 if (f2.inbounds(inst) and w < n_under+1) {
+                    // A connection can exist here, so we also condition on
+                    // (c) target tile (i.e. f2) being underground with same orientation
+                    sat_push_amend(inst, fd2.und);
+                    
                     if (w > 2) {
-                        // A connection can exist here, so we also condition on
-                        // (c) target tile (i.e. f2) being underground with same orientation
-                        sat_push_amend(inst, fd2.und);
-
                         // There must be a connection (no useless tiles)
                         sat_add(inst, clause, {fd2.inp});
 
@@ -460,7 +468,7 @@ void factorio_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
             if (not Field {fd.move()}.inbounds(inst)) continue;
 
             sat_push_add_pop(inst, 
-                {f.belt, fd.inp, fd.move().back().out},
+                {fd.inp, fd.move().back().out, ~Field {fd.move()}.split},
                 lines_equal, {f.lines_all, Field {fd.move()}.lines_all}
             );
             sat_push_add_pop(inst, 
@@ -646,19 +654,23 @@ void factorio_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
         s64 ny        = hashmap_get(&inst->params, Factorio::fpar_ny);
         s64 s_input   = hashmap_get(&inst->params, Factorio::fpar_s_input);
         s64 s_output  = hashmap_get(&inst->params, Factorio::fpar_s_output);
-        
-        for (Dir fd: f.dirs) {
-            if (not Field {fd.move()}.inbounds(inst)) continue;
 
-            if (border_type == Field::BORDER_EMPTY) {
+        s64 notin = 0;
+        for (Dir fd: f.dirs) {
+            if (not Field {fd.move()}.inbounds(inst)) {
+                sat_add(inst, logical_and, {~fd.out, ~fd.inp, ~fd.sid});
+                ++notin;
+                
+            } else if (border_type == Field::BORDER_EMPTY) {
                 // Empty border tiles have neither input nor output
                 assert(args.size == 3);
-                sat_add(inst, logical_and, {~fd.out, ~fd.inp});
+                sat_add(inst, logical_and, {~fd.out, ~fd.inp, ~fd.sid, f.empty, ~f.belt});
+                sat_add(inst, lines_equal, {f.lines_all, lines_empty});
                 
             } else if (border_type == Field::BORDER_OUT) {
                 // Output border tiles have their items concentrated in a single line
                 assert(args.size == 4);
-                sat_add(inst, logical_and, {fd.out, ~fd.inp});
+                sat_add(inst, logical_and, {fd.out, ~fd.inp, ~fd.sid, ~f.empty, f.belt});
                 s64 index = args[3];
                 Array_t<u64> lines_item = sat_expand(inst, f.lines_item, &inst->rewrite_temp);
                 for (u64 line: lines_item) {
@@ -669,14 +681,24 @@ void factorio_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
             } else if (border_type == Field::BORDER_INP) {
                 // Input border lines have items spread out
                 assert(args.size == 3);
-                sat_add(inst, logical_and, {~fd.out, fd.inp});
+                sat_add(inst, logical_and, {~fd.out, fd.inp, ~fd.sid, ~f.empty, f.belt});
                 Array_t<u64> lines = sat_expand(inst, f.lines_item, &inst->rewrite_temp);
                 for (u64 line: lines) {
                     sat_add(inst, line_equal_const, {line, (u64)s_input});
                 }
                 sat_add(inst, line_equal_const, {f.line_sum, (u64)(s_input * lines.size)});
                 sat_add(inst, line_equal, {f.line_block, line_full});
+            } else {
+                assert(false);
             }
+        }
+
+        if (notin == 4) {
+            // Corners
+            sat_add(inst, logical_and, {f.empty, ~f.belt});            
+            sat_add(inst, lines_equal, {f.lines_all, lines_empty});
+        } else {
+            assert(notin == 3);
         }
 
     } break;

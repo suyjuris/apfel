@@ -1,5 +1,86 @@
 
 
+struct Smoothstep {
+    u64 begin = 0, duration = 1000000000ull;
+    float value0 = 0.f, value1 = 0.f, speed0 = 0.f, speed1 = 0.f;
+};
+
+// Return the coefficients for the polynomial of the smoothstep. a is the constant term. The
+// polynomial p is the unique third-degree polynomial with
+//     p (0) = step->value0
+//     p (1) = step->speed0
+//     p'(0) = step->value1
+//     p'(1) = step->speed1
+void _smoothstep_coeff(Smoothstep* step, float* a, float* b, float* c, float* d) {
+    *a = step->value0;
+    *b = step->speed0;
+    *c = 3.f*(step->value1 - *a) - 2.f*(*b) - step->speed1;
+    *d = 2.f*(*a - step->value1) + *b + step->speed1;
+}
+
+void smoothstep_add(Smoothstep* step, float add, float min, float max) {
+    u64 now = platform_now();
+    if (step->begin == 0) {
+        step->begin = now;
+        step->speed0 = 0.f;
+        // value0 remains
+        step->value1 = step->value0 + add;
+        step->speed1 = 0.f;
+    } else {
+        float x = (float)(now - step->begin) / (float)step->duration;
+        
+        float a, b, c, d;
+        _smoothstep_coeff(step, &a, &b, &c, &d);
+        
+        step->begin = now;
+        step->value0 = ((d*x + c)*x + b)*x + a;
+        step->speed0 = (3.f*d*x + 2.f*c)*x + b;
+        step->value1 += add;
+        step->speed1 = 0.f;
+    }
+
+    step->value1 = std::min(step->value1, max);
+    step->value1 = std::max(step->value1, min);
+}
+
+float smoothstep_set(Smoothstep* step, float value, float vmin = -INFINITY, float vmax = INFINITY) {
+    float v = min(max(value, vmin), vmax);
+    step->begin = 0;
+    step->value0 = v;
+    step->value1 = v;
+    return v;
+}
+
+float smoothstep_get(Smoothstep* step, bool* need_redraw = nullptr) {
+    if (step->begin == 0) {
+        if (need_redraw) *need_redraw = false;
+        return step->value0;
+    }
+
+    u64 now = platform_now();
+    float x;
+    if (now >= step->begin + step->duration) {
+        step->begin = 0.f;
+        step->value0 = step->value1;
+        return step->value0;
+    } else {
+        if (need_redraw) *need_redraw = true;
+        
+        float x = (float)(now - step->begin) / (float)step->duration;
+        float a, b, c, d;
+        _smoothstep_coeff(step, &a, &b, &c, &d);
+        return ((d*x + c)*x + b)*x + a;
+    }
+
+}
+
+struct Scrollbar {
+    u64 id;
+    Smoothstep step {};
+    float total_height = 0;
+    u32 flags = 0;
+};
+
 struct Gui {
     struct Pointable {
         u64 id;
@@ -22,22 +103,51 @@ struct Gui {
         DRAW_COMPACT    = 1024,
         EVENT_CLICKED   = 2048,
         EVENT_CLICKED_R = 4096,
-        MOD_BUTTONLIKE  = 8192,
-        MOD_USER1       = 16384,
-        MOD_USER2       = 32768,
-        _DEAD           = 65536,
-        MASK_MOD = MOD_BUTTONLIKE | MOD_USER1 | MOD_USER2,
+        EVENT_MOTION    = 8192, 
+        EVENT_SCROLL    = 16384,
+        MOD_BUTTONLIKE  = 32768,
+        MOD_DRAGGABLE   = 65536,
+        MOD_SCROLLABLE  = 1<<17,
+        MOD_USER1       = 1<<18,
+        MOD_USER2       = 1<<19,
+        _DEAD           = 1<<20,
+        MASK_MOD = MOD_BUTTONLIKE | MOD_DRAGGABLE | MOD_SCROLLABLE | MOD_USER1 | MOD_USER2,
+        MASK_EVENT = EVENT_CLICKED | EVENT_CLICKED_R | EVENT_MOTION | EVENT_SCROLL,
     };
 
-    Array_dyn<Pointable> pointables;
+    Hashmap<Pointable> pointables;
     u64 pointable_drag_id = 0;
+    Vec2 pointable_drag_last, pointable_drag_diff;
+    s64 pointable_scroll_diff;
+    u32 clear_once_flags;
+
+    Array_dyn<Scrollbar> scrollbars;
+    float scrollbar_step = 50.f;
 
     Shader buttonlike;
     float buttonlike_width_max = 40.f;
     float z_level_add = 0.f;
 
+    Shape_drawer* shapes;
     Font_data* fonts;
     s64 font_gui;
+
+    struct Timer {
+        Gui* gui;
+        s64 index_to_write;
+        ~Timer() {
+            gui->timer_data[index_to_write].duration += platform_now_real();
+        }
+    };
+    struct Timer_data {
+        u64 id, duration;
+        Array_t<u8> name;
+    };
+    Array_dyn<Timer_data> timer_data;
+    bool debug_draw_timers = false;
+
+    Array_dyn<u8> str_temp;
+    Array_dyn<s64> index_temp;
 };
 
 #ifdef ASSET_gui_buttonlike_v
@@ -106,14 +216,9 @@ struct Gui {
 
 Gui::Pointable* gui_pointable_get(Gui* gui, Array_t<u8> name, Array_t<s64> name_args) {
     u64 id = hash_u64(hash_str(name)) ^ hash_arr({(u64*)name_args.data, name_args.size});
-    for (auto& i: gui->pointables) {
-        if (i.id == id) {
-            i.flags &= ~Gui::_DEAD;
-            return &i;
-        }
-    }
-    array_push_back(&gui->pointables, {id, {}, {}, 0.f, 0});
-    return &gui->pointables.back();
+    auto* p = hashmap_getcreate(&gui->pointables, id, {id, {}, {}, 0.f, 0});
+    p->flags &= ~Gui::_DEAD;
+    return p;
 }
 
 u32 gui_pointable(Gui* gui, Array_t<u8> name, Array_t<s64> name_args, Vec2 p = {}, Vec2 size = {}, float z = 0.f) {
@@ -124,43 +229,109 @@ u32 gui_pointable(Gui* gui, Array_t<u8> name, Array_t<s64> name_args, Vec2 p = {
     return r->flags;
 }
 
-void gui_frame_init(Gui* gui) {
-    s64 i_out = 0;
-    for (s64 i = 0; i < gui->pointables.size; ++i) {
-        Gui::Pointable r = gui->pointables[i];
-        if (~r.flags & Gui::_DEAD) {
-            r.flags = (r.flags & Gui::MASK_MOD) | Gui::_DEAD;
-            gui->pointables[i_out++] = r;
+
+#define GUI_CONCAT_(x,y) x##y
+#define GUI_CONCAT(x,y) GUI_CONCAT_(x,y)
+#define GUI_TIMER(gui) auto GUI_CONCAT(unnamed_timer, __LINE__) {gui_timer((gui), {(u8*)__func__, (s64)sizeof(__func__)-1})};
+
+Gui::Timer gui_timer(Gui* gui, Array_t<u8> name) {
+    u64 id = hash_str(name);
+    for (s64 i = 0; i < gui->timer_data.size; ++i) {
+        auto* p = &gui->timer_data[i];
+        if (p->id == id) {
+            p->duration -= platform_now_real();
+            return {gui, i};
         }
     }
-    gui->pointables.size = i_out;
+    s64 i = gui->timer_data.size;
+    array_push_back(&gui->timer_data, {id, -platform_now_real(), name});
+    return {gui, i};
+}
+
+void gui_draw_timers(Gui* gui, Vec2 p, Vec2 size) {
+    float w_val;
+    font_metrics_string_get(gui->fonts, gui->font_gui, "999.999ms "_arr, &w_val);
+
+    float w_name = 0.f;
+    for (auto i: gui->timer_data) {
+        float w;
+        font_metrics_string_get(gui->fonts, gui->font_gui, i.name, &w);
+        if (w_name < w) w_name = w;
+    }
+
+    p.x += size.x - w_name - w_val - font_instance_get(gui->fonts, gui->font_gui).space;
+    for (auto i: gui->timer_data) {
+        gui->str_temp.size = 0;
+        array_printf(&gui->str_temp, "%lld.%03lld ", i.duration / 1000000, (i.duration + 500) / 1000 % 1000);
+        float w;
+        font_metrics_string_get(gui->fonts, gui->font_gui, gui->str_temp, &w);
+        font_draw_string(gui->fonts, gui->font_gui, gui->str_temp, {p.x + w_val - w, p.y});
+        font_draw_string(gui->fonts, gui->font_gui, i.name, {p.x + w_val, p.y}, Palette::BLACK, nullptr, &p.y);
+    }
+}
+
+void gui_frame_init(Gui* gui) {
+    gui->index_temp.size = 0;
+    for (auto& slot: gui->pointables.slots) {
+        if (slot.key == gui->pointables.empty) continue;
+        if (~slot.val.flags & Gui::_DEAD) {
+            slot.val.flags |= Gui::_DEAD;
+            slot.val.flags &= ~Gui::MASK_EVENT;
+        } else {
+            array_push_back(&gui->index_temp, slot.key);
+        }
+    }
+    for (s64 key: gui->index_temp) {
+        hashmap_delete(&gui->pointables, key);
+    }
+
+    {s64 i_out = 0;
+    for (s64 i = 0; i < gui->scrollbars.size; ++i) {
+        Scrollbar r = gui->scrollbars[i];
+        if (~r.flags & Gui::_DEAD) {
+            r.flags |= Gui::_DEAD;
+            gui->scrollbars[i_out++] = r;
+        }
+    }
+    gui->scrollbars.size = i_out;}
+
+    gui->pointable_drag_diff = {};
+    gui->pointable_scroll_diff = 0;
+    gui->clear_once_flags = 0;
 }
 
 void gui_process_input(Gui* gui, Key i) {
+    GUI_TIMER(gui);
+
     if (i.type == Key::MOUSE) {
         u8 action; s64 x, y;
         i.get_mouse_param(&action, &x, &y);
             
-        float best_z = 1.f;
+        float best_z = 1000.f;
+        float best_z_scroll = 1000.f;
         Gui::Pointable* under = nullptr;
+        Gui::Pointable* under_scroll = nullptr;
         Gui::Pointable* dragged = nullptr;
-        for (auto& r: gui->pointables) {
-            r.flags &= ~Gui::DRAW_ACTIVE;
-            if (r.id == gui->pointable_drag_id) dragged = &r;
-            if (x < r.p.x or y < r.p.y or x >= r.p.x+r.size.x or y >= r.p.y+r.size.y) continue;
-            if (r.z <= best_z) { best_z = r.z; under = &r; }
+        for (auto& slot: gui->pointables.slots) {
+            if (slot.key == gui->pointables.empty) continue;
+            Gui::Pointable* r = &slot.val;
+            r->flags &= Gui::_DEAD | Gui::MASK_MOD | gui->clear_once_flags;
+            if (r->id == gui->pointable_drag_id) dragged = r;
+            if (x < r->p.x or y < r->p.y or x >= r->p.x+r->size.x or y >= r->p.y+r->size.y) continue;
+            if (r->z <= best_z) { best_z = r->z; under = r; }
+            if ((r->flags & Gui::MOD_SCROLLABLE) and r->z <= best_z_scroll) { best_z_scroll = r->z; under_scroll = r; }
         }
+        gui->clear_once_flags |= Gui::DRAW_ACTIVE;
         
-        if (under) {
-            under->flags |= Gui::DRAW_ACTIVE;
-        }
-
+        if (under) under->flags |= Gui::DRAW_ACTIVE;
         
         if (action == Key::LEFT_DOWN) {
             if (under) {
-                if (under->flags & Gui::MOD_BUTTONLIKE) {
+                if (under->flags & (Gui::MOD_BUTTONLIKE | Gui::MOD_DRAGGABLE)) {
                     under->flags |= Gui::DRAW_PRESSED;
                     gui->pointable_drag_id = under->id;
+                    gui->pointable_drag_last = {(float)x, (float)y};
+                    gui->pointable_drag_diff = {};
                 } else {
                     under->flags |= Gui::EVENT_CLICKED;
                 }
@@ -173,15 +344,31 @@ void gui_process_input(Gui* gui, Key i) {
                 dragged->flags |= Gui::EVENT_CLICKED;
             }
         } else if (action == Key::MOTION) {
-            if (under and dragged and under->id == dragged->id) {
-                assert(under == dragged);
-                dragged->flags |= Gui::DRAW_PRESSED;
+            if (dragged) {
+                bool is_pressed = dragged->flags & Gui::MOD_BUTTONLIKE
+                    ? under and under->id == dragged->id : true;
+                if (is_pressed) dragged->flags |= Gui::DRAW_PRESSED;
+
+                Vec2 p {(float)x, (float)y};
+                gui->pointable_drag_diff += p - gui->pointable_drag_last;
+                gui->pointable_drag_last = p;
+                dragged->flags |= Gui::EVENT_MOTION;
             }
         } else if (action == Key::RIGHT_DOWN) {
             if (under) {
                 under->flags |= Gui::EVENT_CLICKED_R;
             }
-        } 
+        } else if (action == Key::SCROLL_UPWARDS) {
+            if (under_scroll) {
+                under_scroll->flags |= Gui::EVENT_SCROLL;
+                gui->pointable_scroll_diff += 1;
+            }
+        } else if (action == Key::SCROLL_DOWNWARDS) {
+            if (under_scroll) {
+                under_scroll->flags |= Gui::EVENT_SCROLL;
+                gui->pointable_scroll_diff -= 1;
+            }
+        }
     }
 }
 
@@ -285,7 +472,7 @@ void gui_draw_buttonlike(Gui* gui, Vec2 p, Vec2 size, Vec2 margin, u32 flags, fl
 
 bool gui_button(
     Gui* gui, Array_t<u8> name, Array_t<s64> name_args,
-    Vec2 p, Array_t<u8> label, float z, float* out_x, float* out_y
+    Vec2 p, Array_t<u8> label, float z, float* out_x = nullptr, float* out_y = nullptr
 ) {
     auto font_gui = font_instance_get(gui->fonts, gui->font_gui);
     
@@ -316,14 +503,106 @@ bool gui_button(
     return pt->flags & Gui::EVENT_CLICKED;
 }
 
-void gui_init(Gui* gui, Asset_store* assets, Font_data* fonts, s64 font) {
+Scrollbar* gui_scrollbar_get(Gui* gui, Array_t<u8> name, Array_t<s64> name_args) {
+    u64 id = hash_u64(hash_str(name)) ^ hash_arr({(u64*)name_args.data, name_args.size});
+    for (auto& i: gui->scrollbars) {
+        if (i.id == id) {
+            i.flags &= ~Gui::_DEAD;
+            return &i;
+        }
+    }
+    array_push_back(&gui->scrollbars, Scrollbar {id});
+    return &gui->scrollbars.back();
+}
+    
+void gui_scrollbar(
+    Gui* gui, Array_t<u8> name, Array_t<s64> name_args,
+    Vec2 p, Vec2 size, float z, float* out_w, float* out_y
+) {
+    Scrollbar* scroll = gui_scrollbar_get(gui, name, name_args);
+    scroll->step.duration = 100000000ull;
+    
+    Gui::Pointable* point  = gui_pointable_get(gui, name, name_args);
+    point->flags |= Gui::MOD_DRAGGABLE;
+
+    Gui::Pointable* area  = gui_pointable_get(gui, "scrollbar_area"_arr, {(s64)point->id});
+    area->flags |= Gui::MOD_SCROLLABLE;
+    area->p = p;
+    area->size = size;
+    area->z = z + 0.5f;
+
+    float bar_width_base = 6;
+    float bar_height_min = 12;
+    Color orange {242, 152,  51};
+    Color black  {200, 200, 200};
+    
+    if (size.y >= scroll->total_height) {
+        smoothstep_set(&scroll->step, 0.f);
+        if (out_w) *out_w = size.x;
+        if (out_y) *out_y = p.y;        
+    } else {
+        Vec2 bar_size = {
+            2*bar_width_base,
+            max(bar_height_min, size.y * size.y / scroll->total_height)
+        };
+        
+        bool need_redraw;
+        float offset = smoothstep_get(&scroll->step, &need_redraw);
+        if (need_redraw) platform_redraw(0);
+
+        float offset_max = scroll->total_height - size.y;
+        Color fill = black;
+        if (point->flags & Gui::DRAW_PRESSED) fill = orange;
+
+        if (area->flags & Gui::EVENT_SCROLL) {
+            smoothstep_add(&scroll->step, -gui->scrollbar_step * gui->pointable_scroll_diff, 0.f, offset_max);
+        }
+        if (point->flags & Gui::EVENT_MOTION) {
+            offset += gui->pointable_drag_diff.y * offset_max / (size.y - bar_size.y);
+            offset = smoothstep_set(&scroll->step, offset, 0.f, offset_max);
+        }
+        
+        Vec2 bar_p = {
+            size.x - bar_size.x,
+            offset / offset_max * (size.y - bar_size.y)
+        };
+        point->p = bar_p;
+        point->size = bar_size;
+        point->z = z;
+        
+        if (not (point->flags & (Gui::DRAW_ACTIVE | Gui::DRAW_PRESSED))) {
+            bar_size.x /= 2.f;
+            bar_p.x += bar_size.x;
+        }
+        shape_rectangle(gui->shapes, p + bar_p, bar_size, fill, z);
+
+        if (out_w) *out_w = size.x - bar_width_base;
+        if (out_y) *out_y = p.y - offset;
+    }
+}
+
+void gui_scrollbar_set_height(Gui* gui, Array_t<u8> name, Array_t<s64> name_args, float height) {
+    Scrollbar* scroll = gui_scrollbar_get(gui, name, name_args);
+    scroll->total_height = height;
+}
+
+void gui_init(Gui* gui, Asset_store* assets, Shape_drawer* shapes, Font_data* fonts, s64 font) {
+    gui->shapes = shapes;
     gui->fonts = fonts;
     gui->font_gui = font;
     gui->buttonlike = opengl_shader_assets(assets, "gui_buttonlike"_arr);
+
+    gui->scrollbar_step = 3.f * font_instance_get(fonts, font).newline;
 }
 
 void gui_frame_draw(Gui* gui, s64 screen_w, s64 screen_h) {
+    if (gui->debug_draw_timers) {
+        gui_draw_timers(gui, {}, {(float)screen_w, (float)screen_h});
+        for (auto& i: gui->timer_data) {
+            i.duration = 0;
+        }
+    }
+    
     opengl_shader_use_and_set_origin(&gui->buttonlike, screen_w, screen_h);
     opengl_shader_draw_and_clear(&gui->buttonlike, GL_TRIANGLE_STRIP);
 }
-

@@ -33,9 +33,9 @@ struct Vec2 {
  
 };
 Vec2 operator+ (float a, Vec2 b) { return b + a; }
-Vec2 operator- (float a, Vec2 b) { return b - a; }
+Vec2 operator- (float a, Vec2 b) { return b + (-a); }
 Vec2 operator* (float a, Vec2 b) { return b * a; }
-Vec2 operator/ (float a, Vec2 b) { return b / a; }
+Vec2 operator/ (float a, Vec2 b) { return Vec2{a, a} / b; }
 float dot(Vec2 a, Vec2 b) { a *= b; return a.x + a.y; }
 Vec2 lerp(Vec2 a, Vec2 b, float t) { return (1.f - t) * a + t * b; }
 
