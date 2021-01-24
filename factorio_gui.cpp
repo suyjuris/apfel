@@ -780,7 +780,9 @@ void factorio_db_choose_params_draw(Application* context, Factorio_params_draw* 
     }
 }
 
-void factorio_solver_doinput(Factorio_solver_draw* draw) {
+void factorio_solver_doinput(Factorio_solver_draw* draw, Font_data* fonts, s64 font_line, Gui* gui) {
+    GUI_TIMER(gui);
+    
     if (platform_now() + 1000000 >= draw->next_check) {
         pollfd pfd {draw->output_fd, POLLIN, 0};
         int code = poll(&pfd, 1, 0);
@@ -810,7 +812,6 @@ void factorio_solver_doinput(Factorio_solver_draw* draw) {
     platform_redraw(draw->next_check);
 
     {s64 last = 0;
-    s64 i_out = 0;
     for (s64 i = 0; i < draw->output_data.size; ++i) {
         if (draw->output_data[i] == '\n') {
             if (draw->output_data[last] == 'v') {
@@ -831,13 +832,17 @@ void factorio_solver_doinput(Factorio_solver_draw* draw) {
                     }
                 }
             } else {
-                memcpy(&draw->output_data[i_out], &draw->output_data[last], i+1 - last);
-                i_out += i+1 - last;
+                auto str = array_subarray(draw->output_data, last, i);
+                u32 word = font_word_create_utf8(fonts, font_line, str);
+                array_push_back(&draw->lines, word);
             }
             last = i+1;
         }
     }
-    draw->output_data.size = i_out;}
+    if (0 < last and last < draw->output_data.size) {
+        memmove(&draw->output_data[0], &draw->output_data[last], draw->output_data.size - last);
+    }
+    draw->output_data.size -= last;}
     
     return;
   error:
@@ -849,7 +854,7 @@ void factorio_solver_draw(Application* context, Factorio_solver_draw* draw, Vec2
     GUI_TIMER(&context->gui);
 
     if (draw->output_fd != -1) {
-        factorio_solver_doinput(draw);
+        factorio_solver_doinput(draw, &context->fonts, context->font_sans, &context->gui);
     }
 
     if (gui_pointable(&context->gui, "solver_draw,show"_arr, {}) & Gui::EVENT_CLICKED) {
@@ -858,18 +863,6 @@ void factorio_solver_draw(Application* context, Factorio_solver_draw* draw, Vec2
         return;
     }
     
-    {s64 last = 0;
-    for (s64 i = 0; i < draw->output_data.size; ++i) {
-        if (draw->output_data[i] == '\n') {
-            auto str = array_subarray(draw->output_data, last, i);
-            u32 word = font_word_create_utf8(&context->fonts, context->font_sans, str);
-            array_push_back(&draw->lines, word);
-            last = i+1;
-        }
-    }
-    memcpy(draw->output_data.data, draw->output_data.data + last, draw->output_data.size - last);
-    draw->output_data.size -= last;}
-
     auto font_sans = font_instance_get(&context->fonts, context->font_sans);
 
     float total_height = draw->lines.size * font_sans.newline + 2*pad.y + 50;

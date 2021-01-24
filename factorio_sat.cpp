@@ -418,7 +418,7 @@ void factorio_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
                 sat_push(inst, {f.under, fd.back().out});
                 // (b) traversed tiles not having underground with the same orientation
                 for (s64 i = 1; i < w-1; ++i) {
-                    sat_push_amend(inst, fd.move(0, i).und);
+                    sat_push_amend(inst, ~fd.move(0, i).und);
                 }
 
                 bool dobreak = false;
@@ -560,7 +560,7 @@ void factorio_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
             s64 rewrite_temp_size = inst->rewrite_temp.size;
             defer { inst->rewrite_temp.size = rewrite_temp_size; };
 
-            auto line = sat_expand(inst, {f.lines_all}, &inst->rewrite_temp);
+            auto line = sat_expand(inst, {line_var}, &inst->rewrite_temp);
             
             // The components have to be monotonic
             for (s64 i = 1; i < line.size; ++i) {
