@@ -18,29 +18,32 @@ void _smoothstep_coeff(Smoothstep* step, float* a, float* b, float* c, float* d)
     *d = 2.f*(*a - step->value1) + *b + step->speed1;
 }
 
-void smoothstep_add(Smoothstep* step, float add, float min, float max) {
+void smoothstep_add(Smoothstep* step, float add, float vmin, float vmax) {
     u64 now = platform_now();
     if (step->begin == 0) {
+        float value1 = min(max(step->value0+add, vmin), vmax);
+        if (step->value0 == value1) return;
+        
         step->begin = now;
         step->speed0 = 0.f;
         // value0 remains
-        step->value1 = step->value0 + add;
+        step->value1 = value1;
         step->speed1 = 0.f;
     } else {
+        float value1 = min(max(step->value1+add, vmin), vmax);
+        if (step->value1 == value1) return;
+
         float x = (float)(now - step->begin) / (float)step->duration;
-        
+            
         float a, b, c, d;
         _smoothstep_coeff(step, &a, &b, &c, &d);
-        
+            
         step->begin = now;
         step->value0 = ((d*x + c)*x + b)*x + a;
         step->speed0 = (3.f*d*x + 2.f*c)*x + b;
-        step->value1 += add;
+        step->value1 = value1;
         step->speed1 = 0.f;
     }
-
-    step->value1 = std::min(step->value1, max);
-    step->value1 = std::max(step->value1, min);
 }
 
 float smoothstep_set(Smoothstep* step, float value, float vmin = -INFINITY, float vmax = INFINITY) {
@@ -545,22 +548,24 @@ void gui_scrollbar(
             2*bar_width_base,
             max(bar_height_min, size.y * size.y / scroll->total_height)
         };
-        
-        bool need_redraw;
-        float offset = smoothstep_get(&scroll->step, &need_redraw);
-        if (need_redraw) platform_redraw(0);
 
         float offset_max = scroll->total_height - size.y;
         Color fill = black;
         if (point->flags & Gui::DRAW_PRESSED) fill = orange;
 
+        bool need_redraw;
+        float offset = smoothstep_get(&scroll->step, &need_redraw);
+        
         if (area->flags & Gui::EVENT_SCROLL) {
             smoothstep_add(&scroll->step, -gui->scrollbar_step * gui->pointable_scroll_diff, 0.f, offset_max);
+            need_redraw = true;
         }
         if (point->flags & Gui::EVENT_MOTION) {
             offset += gui->pointable_drag_diff.y * offset_max / (size.y - bar_size.y);
             offset = smoothstep_set(&scroll->step, offset, 0.f, offset_max);
         }
+        
+        if (need_redraw) platform_redraw(0);
         
         Vec2 bar_p = {
             size.x - bar_size.x,
@@ -592,7 +597,7 @@ void gui_init(Gui* gui, Asset_store* assets, Shape_drawer* shapes, Font_data* fo
     gui->font_gui = font;
     gui->buttonlike = opengl_shader_assets(assets, "gui_buttonlike"_arr);
 
-    gui->scrollbar_step = 3.f * font_instance_get(fonts, font).newline;
+    gui->scrollbar_step = 6.f * font_instance_get(fonts, font).newline;
 }
 
 void gui_frame_draw(Gui* gui, s64 screen_w, s64 screen_h) {

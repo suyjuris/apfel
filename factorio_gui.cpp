@@ -22,6 +22,21 @@
 #include "factorio_sat.cpp"
 
 
+struct Backend {
+    Shader circle, spline;
+    s64 screen_w = 0, screen_h = 0;
+    
+    Font_data fonts;
+    s64 font_sans_base, font_sans;
+    s64 font_solution;
+
+    Gui gui;
+    Shape_drawer shapes;
+
+    Array_dyn<u8> string_temp;
+};
+
+
 struct Factorio_solution_draw {
     Sat_instance inst;
     Sat_solution sol;
@@ -43,6 +58,7 @@ struct Factorio_params_draw {
     Factorio_db fdb;
     s64 current_instance = -1;
     s64 current_solution = -1;
+    float pad = 10.f;
 };
 
 struct Factorio_solver_draw {
@@ -63,21 +79,10 @@ struct Application {
     Array_dyn<Key> input_queue;
 
     // Other data
+    Backend backend;
+    
     Asset_store assets;
     bool asset_is_pack = false;
-    
-    Shader circle, spline;
-
-    s64 screen_w = 0, screen_h = 0;
-    float scale = 1.f; // Ratio of world-coordinates and pixels (world * scale = pixels)
-
-    Font_data fonts;
-    s64 font_sans_base, font_sans;
-    s64 font_solution;
-    Array_dyn<u8> string_temp;
-
-    Gui gui;
-    Shape_drawer shapes;
 
     enum Application_state: u8 {
         CHOOSE_PARAMS = 0, RUN_SOLVER, DRAW_SOLUTION
@@ -89,7 +94,7 @@ struct Application {
     Factorio_solver_draw factorio_solver_draw;
 };
 
-void factorio_solution_draw_image(Application* context, Factorio_solution_draw* draw, Vec2 p, float* x_out, float* y_out) {
+void factorio_solution_draw_image(Backend* context, Factorio_solution_draw* draw, Vec2 p, float* x_out, float* y_out) {
     GUI_TIMER(&context->gui);
 
     float border_size = 16;
@@ -258,7 +263,7 @@ void factorio_solution_draw_image(Application* context, Factorio_solution_draw* 
     if (y_out) *y_out = p.y + (ny + 2) * size;
 }
 
-void factorio_solution_draw_detail(Application* context, Factorio_solution_draw* draw, Vec2 p) {
+void factorio_solution_draw_detail(Backend* context, Factorio_solution_draw* draw, Vec2 p) {
     GUI_TIMER(&context->gui);
     
     s64 n_linedim = hashmap_get(&draw->inst.params, Factorio::fpar_n_linedim);
@@ -387,7 +392,7 @@ void factorio_solution_draw_detail(Application* context, Factorio_solution_draw*
     }
 }
 
-void factorio_solution_draw_props(Application* context, Factorio_solution_draw* draw, Vec2 pos, Vec2 size) {
+void factorio_solution_draw_props(Backend* context, Factorio_solution_draw* draw, Vec2 pos, Vec2 size) {
     GUI_TIMER(&context->gui);
     
     auto font_sans = font_instance_get(&context->fonts, context->font_sans);
@@ -485,7 +490,7 @@ void factorio_solution_draw_props(Application* context, Factorio_solution_draw* 
     }
 }
 
-void factorio_solution_draw(Application* context, Factorio_solution_draw* draw, Vec2 pos, Vec2 size) {
+void factorio_solution_draw(Backend* context, Factorio_solution_draw* draw, Vec2 pos, Vec2 size) {
     if (draw->do_animation) {
         hashmap_clear(&draw->sol.values);
         auto arr = array_subarray(draw->anim_data, 0, draw->anim_indices[draw->anim_frame]);
@@ -637,7 +642,13 @@ void factorio_solver_init(Factorio_solver_draw* draw, Factorio_params p) {
     exit(15);
 }
 
-void factorio_db_choose_params_draw(Application* context, Factorio_params_draw* draw, Sat_instance* into_inst, Vec2 p) {
+struct Factorio_db_choose_params_result {
+    u8 action;
+    s64 instance = -1;
+    s64 solution = -1;
+};
+
+Factorio_db_choose_params_result factorio_db_choose_params_draw(Backend* context, Factorio_params_draw* draw, Sat_instance* into_inst, Vec2 p, Vec2 size) {
     GUI_TIMER(&context->gui);
     
     auto font_sans = font_instance_get(&context->fonts, context->font_sans);    
@@ -671,19 +682,14 @@ void factorio_db_choose_params_draw(Application* context, Factorio_params_draw* 
     }
 
     if (action_draw_instance) {
-        s64 i = draw->current_instance;
-        Factorio_solution* sol = draw->current_solution >= 0 ? &draw->fdb.solutions[i] : nullptr;
-        factorio_solution_init_from_params(&context->factorio_solution_draw, draw->fdb.instances[i].params, sol);
-        context->state = Application::DRAW_SOLUTION;
-        return;
+        return {Application::DRAW_SOLUTION, draw->current_instance, draw->current_solution};
+    } else if (action_run_solver) {
+        return {Application::RUN_SOLVER, draw->current_instance};
     }
-    
-    if (action_run_solver) {
-        s64 i = draw->current_instance;
-        factorio_solver_init(&context->factorio_solver_draw, draw->fdb.instances[i].params);
-        context->state = Application::RUN_SOLVER;
-        return;
-    }
+
+    gui_scrollbar(&context->gui, "choose_instance,scroll"_arr, {}, p, size, 0.f, &size.x, &p.y);
+    float orig_y = p.y;
+    p += draw->pad;
     
     font_draw_string(&context->fonts, context->font_sans, "Choose instance:"_arr, p, Palette::BLACK, nullptr, &p.y);    
     p.y += font_sans.newline * 0.5;
@@ -778,6 +784,11 @@ void factorio_db_choose_params_draw(Application* context, Factorio_params_draw* 
         
         p.y = v.y + font_sans.newline * 0.25f;
     }
+
+    p.y += draw->pad;
+    gui_scrollbar_set_height(&context->gui, "choose_instance,scroll"_arr, {}, p.y - orig_y);
+    
+    return {Application::CHOOSE_PARAMS};
 }
 
 void factorio_solver_doinput(Factorio_solver_draw* draw, Font_data* fonts, s64 font_line, Gui* gui) {
@@ -850,7 +861,7 @@ void factorio_solver_doinput(Factorio_solver_draw* draw, Font_data* fonts, s64 f
     exit(11);
 }
 
-void factorio_solver_draw(Application* context, Factorio_solver_draw* draw, Vec2 p, Vec2 size, Vec2 pad) {
+u8 factorio_solver_draw(Backend* context, Factorio_solver_draw* draw, Vec2 p, Vec2 size, Vec2 pad) {
     GUI_TIMER(&context->gui);
 
     if (draw->output_fd != -1) {
@@ -858,9 +869,7 @@ void factorio_solver_draw(Application* context, Factorio_solver_draw* draw, Vec2
     }
 
     if (gui_pointable(&context->gui, "solver_draw,show"_arr, {}) & Gui::EVENT_CLICKED) {
-        factorio_solution_init_from_inst(&context->factorio_solution_draw, &draw->inst, draw->output_lits);
-        context->state = Application::DRAW_SOLUTION;
-        return;
+        return Application::DRAW_SOLUTION;
     }
     
     auto font_sans = font_instance_get(&context->fonts, context->font_sans);
@@ -881,6 +890,8 @@ void factorio_solver_draw(Application* context, Factorio_solver_draw* draw, Vec2
 
         gui_button(&context->gui, "solver_draw,show"_arr, {}, p, "Show solution"_arr, 0.f);
     }
+    
+    return Application::RUN_SOLVER;
 }
 
 void factorio_solution_frame_change(Factorio_solution_draw* draw, s64 diff) {
@@ -888,10 +899,10 @@ void factorio_solution_frame_change(Factorio_solution_draw* draw, s64 diff) {
 }
 
 void application_handle_resize(Application* context, s64 width, s64 height) {
-    if (width  != -1) context->screen_w = width;
-    if (height != -1) context->screen_h = height;
+    if (width  != -1) context->backend.screen_w = width;
+    if (height != -1) context->backend.screen_h = height;
 
-    glViewport(0.0, 0.0, context->screen_w, context->screen_h);
+    glViewport(0.0, 0.0, context->backend.screen_w, context->backend.screen_h);
 }
 
 void application_init_assets(Application* context, bool flag_pack_assets) {
@@ -912,29 +923,49 @@ void application_init(Application* context) {
     // Initialise instance
     Array_t<u8> fdb_data = asset_get(&context->assets, "factorio_db"_arr);
     factorio_db_parse(&context->factorio_params_draw.fdb, fdb_data);
+
+    auto* backend = &context->backend;
     
     // Initialise the fonts
-    font_init(&context->fonts, &context->assets, GL_TEXTURE2);
-    context->font_sans_base = font_add(&context->fonts, asset_get(&context->assets, "font"_arr));
-    context->font_sans = font_instantiate(&context->fonts, context->font_sans_base, 15.f);
-    font_instantiate_defaults(&context->fonts, context->font_sans_base,
-        context->font_sans_base, context->font_sans_base, context->font_sans_base);
+    font_init(&backend->fonts, &context->assets, GL_TEXTURE2);
+    backend->font_sans_base = font_add(&backend->fonts, asset_get(&context->assets, "font"_arr));
+    backend->font_sans = font_instantiate(&backend->fonts, backend->font_sans_base, 15.f);
+    font_instantiate_defaults(&backend->fonts, backend->font_sans_base,
+        backend->font_sans_base, backend->font_sans_base, backend->font_sans_base);
 
-    font_instance_scale_defaults(&context->fonts, 0.75f);
+    font_instance_scale_defaults(&backend->fonts, 0.75f);
 
-    context->font_solution = font_instantiate(&context->fonts, context->font_sans_base);
+    backend->font_solution = font_instantiate(&backend->fonts, backend->font_sans_base);
 
     // Initialise the shapes and gui
-    shape_init(&context->shapes, &context->assets);
-    gui_init(&context->gui, &context->assets, &context->shapes, &context->fonts, context->font_sans);
+    shape_init(&backend->shapes, &context->assets);
+    gui_init(&backend->gui, &context->assets, &backend->shapes, &backend->fonts, backend->font_sans);
     
     
     // Now we load our shaders
-    context->spline = opengl_shader_assets(&context->assets, "spline"_arr);
+    backend->spline = opengl_shader_assets(&context->assets, "spline"_arr);
+}
+
+void backend_frame_draw(Backend* backend) {
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    
+    opengl_clear_color(Palette::BG);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glClear(GL_DEPTH_BUFFER_BIT);
+    
+    shape_frame_draw(&backend->shapes, backend->screen_w, backend->screen_h);
+    gui_frame_draw  (&backend->gui,    backend->screen_w, backend->screen_h);
+
+    gui_timer(&backend->gui, "font_frame_draw"_arr);
+    font_frame_draw (&backend->fonts,  backend->screen_w, backend->screen_h);
 }
 
 void application_render(Application* context) {
-    gui_frame_init(&context->gui);
+    gui_frame_init(&context->backend.gui);
     
     for (Key i: context->input_queue) {
         if (i.type == Key::SPECIAL and i.special == Key::C_QUIT) {
@@ -950,47 +981,53 @@ void application_render(Application* context) {
         } else if (i.type == Key::SPECIAL and i.special == Key::F4) {
             context->factorio_solution_draw.inst.debug_explain_vars_raw ^= true;
         } else if (i.type == Key::SPECIAL and i.special == Key::F5) {
-            context->gui.debug_draw_timers ^= true;
+            context->backend.gui.debug_draw_timers ^= true;
+        } else if (i.type == Key::SPECIAL and i.special == Key::ESCAPE) {
+            context->state = Application::CHOOSE_PARAMS;
         } else {
-            gui_process_input(&context->gui, i);
+            gui_process_input(&context->backend.gui, i);
         }
     }
     context->input_queue.size = 0;
     
-    context->shapes.z_level_add = 0.1f;
+    context->backend.shapes.z_level_add = 0.1f;
 
-    Vec2 screen {(float)context->screen_w, (float)context->screen_h};
+    Vec2 screen {(float)context->backend.screen_w, (float)context->backend.screen_h};
     float pad = 10.f;
     Vec2 padd = {pad, pad};
 
     if (context->state == Application::CHOOSE_PARAMS) {
-        factorio_db_choose_params_draw(
-            context, &context->factorio_params_draw, &context->factorio_solution_draw.inst, padd
-        );
+        auto* draw = &context->factorio_params_draw;
+        auto result = factorio_db_choose_params_draw(&context->backend, draw, &context->factorio_solution_draw.inst, {}, screen);
+        if (result.action == context->state) {
+            // nothing
+        } else if (result.action == Application::DRAW_SOLUTION) {
+            Factorio_solution* sol = result.solution >= 0 ? &draw->fdb.solutions[result.solution] : nullptr;
+            factorio_solution_init_from_params(&context->factorio_solution_draw, draw->fdb.instances[result.instance].params, sol);
+        } else if (result.action == Application::RUN_SOLVER) {
+            factorio_solver_init(&context->factorio_solver_draw, draw->fdb.instances[result.instance].params);
+        } else {
+            assert(false);
+        }
+        context->state = result.action;
     }
     if (context->state == Application::RUN_SOLVER) {
-        factorio_solver_draw(context, &context->factorio_solver_draw, {}, screen, padd);
+        u8 action = factorio_solver_draw(&context->backend, &context->factorio_solver_draw, {}, screen, padd);
+        if (action == context->state) {
+            // nothing
+        } else if (action == Application::DRAW_SOLUTION) {
+            factorio_solution_init_from_inst(&context->factorio_solution_draw,
+                &context->factorio_solver_draw.inst, context->factorio_solver_draw.output_lits);
+        } else {
+            assert(false);
+        }
     }
     if (context->state == Application::DRAW_SOLUTION) {
         context->factorio_solution_draw.pad = pad;
-        factorio_solution_draw(context, &context->factorio_solution_draw, padd, screen - 2*padd);
+        factorio_solution_draw(&context->backend, &context->factorio_solution_draw, padd, screen - 2*padd);
     }
-    
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LEQUAL);
-    
-    opengl_clear_color(Palette::BG);
-    glClear(GL_COLOR_BUFFER_BIT);
-    glClear(GL_DEPTH_BUFFER_BIT);
-    
-    shape_frame_draw(&context->shapes, context->screen_w, context->screen_h);
-    gui_frame_draw  (&context->gui,    context->screen_w, context->screen_h);
-
-    gui_timer(&context->gui, "font_frame_draw"_arr);
-    font_frame_draw (&context->fonts,  context->screen_w, context->screen_h);
+    backend_frame_draw(&context->backend);
 }
 
 

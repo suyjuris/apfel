@@ -34,7 +34,7 @@ solution 2to5 sol1 {
 }
 
 instance 2to3 {
-    nx = 6, ny = 5, scale_fac = 1, do_blocking = 0,
+    nx = 6, ny = 5, scale_fac = 2, do_blocking = 0,
     yoff_output = [3, 4], yoff_input = [2, 4, 3]
 }
 solution 2to3 sol1 {
@@ -74,7 +74,7 @@ instance 2to5 {
     nx = 6, ny = 7, scale_fac = 1, do_blocking = 0,
     yoff_output = [3, 2], yoff_input = [3, 2, 4, 5, 6]
 }
-solution 2to5 sol1 {
+solution 2to5 sol2 {
     .vu<.>.v<u.<
     .>S>.^vuS>.^
     .>S>S>.>S>.>
