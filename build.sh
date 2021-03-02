@@ -17,6 +17,8 @@ if [ "$1" = "debug" ]; then
     "$GXX" $CXXFLAGS -O0 -ggdb -Werror platform_linux.cpp -o "$NAME" $LDFLAGS
 elif [ "$1" = "release" ]; then
     "$GXX" $CXXFLAGS -O2 platform_linux.cpp -o "$NAME" $LDFLAGS
+elif [ "$1" = "construct" ]; then
+    "$GXX" $CXXFLAGS -O0 -ggdb -Werror construct.cpp -o "construct" $LDFLAGS
 else
     echo "Error: first argument must be either debug or release"
 fi;

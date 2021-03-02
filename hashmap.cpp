@@ -213,6 +213,7 @@ void hashmap_clear(Hashmap<T>* map) {
     for (s64 i = 0; i < map->slots.size; ++i) {
         map->slots[i].key = map->empty;
     }
+    map->size = 0;
 }
 
 template <typename T>

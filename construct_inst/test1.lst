@@ -1,0 +1,33 @@
+
+
+size 5 5
+items 10
+recipe tinned_copper_wire
+  in copper_wire
+  in tin_plate
+  out tinned_copper_wire
+recipe copper_wire
+  beacon 1
+  in copper_plate
+  out copper_wire
+recipe tin_plate
+  in tin_sheet_coil
+  out tin_plate
+recipe tin_sheet_coil
+  in molten_tin
+  in coolant
+  out tin_sheet_coil
+  out coolant_used
+recipe copper_plate
+  in copper_sheet_coil
+  out copper_plate
+recipe copper_sheet_coil
+  in molten_copper
+  in coolant
+  out copper_sheet_coil
+  out coolant_used
+recipe total
+  in molten_copper
+  in molten_tin
+  in coolant
+  out coolant_used

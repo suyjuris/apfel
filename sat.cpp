@@ -1,5 +1,7 @@
 
 struct Sat_instance {
+    // !!! New members must be re-initialisable in sat_init !!!
+    
     Array_dyn<s64> clause_offsets;
     Array_dyn<u64> clause_literals;
     Array_dyn<u64> clause_constraint;
@@ -34,8 +36,8 @@ struct Sat_instance {
 
     Hashmap<s64> params;
 
-    u64 debug_forbidden_id = 0x10ull << 56;
-    bool debug_explain_vars_raw = false;
+    u64 debug_forbidden_id;
+    bool debug_explain_vars_raw;
 };
 
 namespace Sat {
@@ -502,7 +504,7 @@ void sat_explain(Sat_instance* inst, u64 id, Array_t<u64> args, Array_dyn<u8>* i
     if (not done) {
         if (type == VAR) {
             // This does not really make sense. Why would you want to not explain a variable?  There
-            // is not really anything recursive. For now, let's just panix.
+            // is not really anything recursive. For now, let's just panic.
             assert(false);
         } else if (type == CONSTRAINT) {
             // Print the arguments in standard function form
@@ -533,6 +535,8 @@ void sat_explain(Sat_instance* inst, u64 id, Array_dyn<u8>* into) {
         
         Array_t<u64> arr = sat_expand(inst, id, &inst->explain_temp);
         sat_explain(inst, id, arr, into);
+    } else if (type == 0) {
+        array_printf(into, "%lld", id);
     } else {
         assert(false);
     }
@@ -646,6 +650,30 @@ void sat_push_add_pop(Sat_instance* inst, Array_t<u64> condition, u64 op, Array_
 }
 
 void sat_init(Sat_instance* inst) {
+    inst->clause_offsets.size = 0;
+    inst->clause_literals.size = 0;
+    inst->clause_constraint.size = 0;
+    inst->context_offsets.size = 0;
+    inst->context_data.size = 0;
+    inst->context_stack.size = 0;
+    inst->constraint_offsets.size = 0;
+    inst->constraint_data.size = 0;
+    inst->constraint_parent = 0;
+    inst->constraint_parent_stack.size = 0;
+    inst->constraint_context.size = 0;
+    inst->group_offsets.size = 0;
+    inst->group_literals.size = 0;
+    inst->rewrite_temp.size = 0;
+    inst->expand_temp.size = 0;
+    inst->explain_temp.size = 0;
+    
+    array_memset(&inst->rewrite_funcs);
+    array_memset(&inst->expand_funcs);
+    hashmap_clear(&inst->explain_funcs);
+    hashmap_clear(&inst->params);
+    inst->debug_forbidden_id = 0x10ull << 56;
+    inst->debug_explain_vars_raw = false;
+    
     array_push_back(&inst->clause_offsets, 0ll);
     array_append(&inst->context_offsets, {0ll, 0ll}); // One empty context in front
     array_push_back(&inst->context_stack, 0ll);
@@ -667,9 +695,15 @@ void sat_init(Sat_instance* inst) {
     sat_add(inst, Sat::clause, {~Sat::var_false});
     sat_add(inst, Sat::clause, {Sat::var_true});
 
-    inst->rewrite_temp = array_create_unreserved<u64>(128 * 1024 * 1024);
-    inst->expand_temp  = array_create_unreserved<u64>(1024 * 1024);
-    inst->explain_temp = array_create_unreserved<u64>(1024 * 1024);
+    if (not inst->rewrite_temp.data) {
+        inst->rewrite_temp = array_create_unreserved<u64>(128 * 1024 * 1024);
+    }
+    if (not inst->expand_temp.data) {
+        inst->expand_temp  = array_create_unreserved<u64>(1024 * 1024);
+    }
+    if (not inst->explain_temp.data) {
+        inst->explain_temp = array_create_unreserved<u64>(1024 * 1024);
+    }
 }
 
 struct Sat_dimacs {
@@ -679,6 +713,10 @@ struct Sat_dimacs {
 };
 
 void sat_write_dimacs(Sat_instance* inst, Sat_dimacs* dimacs) {
+    hashmap_clear(&dimacs->map_forth);
+    dimacs->map_back.size = 0;
+    dimacs->text.size = 0;
+    
     array_push_back(&dimacs->map_back, 0ull);
 
     for (s64 i = 0; i+1 < inst->clause_offsets.size; ++i) {
@@ -717,11 +755,12 @@ void sat_dimacs_free(Sat_dimacs* dimacs) {
     array_free(&dimacs->text);
 }
 
-void sat_write_human(Sat_instance* inst, Array_dyn<u8>* into) {
+void sat_write_human(Sat_instance* inst, Array_dyn<u8>* into, bool skip_basic=false) {
     Array_dyn<s64> parent_stack;
     defer { array_free(&parent_stack); };
 
     s64 i_clause = 0;
+    s64 silent_until_stack_length = -1;
     for (s64 i = 0; i < inst->constraint_parent.size; ++i) {
         s64 parent = inst->constraint_parent[i];
 
@@ -730,23 +769,35 @@ void sat_write_human(Sat_instance* inst, Array_dyn<u8>* into) {
         }
         array_push_back(&parent_stack, i);
 
-        for (s64 j = 0; j+2 < parent_stack.size*2; ++j) {
-            array_push_back(into, (u8)' ');
+        if (silent_until_stack_length >= parent_stack.size) {
+            silent_until_stack_length = -1;
         }
-        
-        sat_explain_constraint(inst, i, into);
-        array_push_back(into, (u8)'\n');
-
-        while (i_clause < inst->clause_constraint.size and inst->clause_constraint[i_clause] == i) {
-            for (s64 j = 0; j < parent_stack.size*2; ++j) {
+        if (silent_until_stack_length == -1) {
+            for (s64 j = 0; j+2 < parent_stack.size*2; ++j) {
                 array_push_back(into, (u8)' ');
             }
 
-            Array_t<u64> data = array_subindex(inst->clause_offsets, inst->clause_literals, i_clause);
-            sat_explain(inst, Sat::clause, data, into);
+            sat_explain_constraint(inst, i, into);
             array_push_back(into, (u8)'\n');
+        }
+
+        while (i_clause < inst->clause_constraint.size and inst->clause_constraint[i_clause] == i) {
+            if (not skip_basic) {
+                for (s64 j = 0; j < parent_stack.size*2; ++j) {
+                    array_push_back(into, (u8)' ');
+                }
+
+                Array_t<u64> data = array_subindex(inst->clause_offsets, inst->clause_literals, i_clause);
+                sat_explain(inst, Sat::clause, data, into);
+                array_push_back(into, (u8)'\n');
+            }
             
             ++i_clause;
+        }
+
+        if (skip_basic and silent_until_stack_length == -1
+                and (inst->constraint_data[inst->constraint_offsets[i]]>>56 & 0xf) <= 4) {
+            silent_until_stack_length = parent_stack.size;
         }
     }
 }
@@ -780,6 +831,17 @@ struct Sat_solution {
         }
     }
 };
+
+void sat_solution_write_human(Sat_instance* inst, Sat_solution* sol, Array_dyn<u8>* into) {
+    for (auto slot: sol->values.slots) {
+        if (slot.key == sol->values.empty) continue;
+        u64 lit = slot.key;
+        if (not slot.val) lit ^= (u64)-1;
+        sat_explain(inst, lit, into);
+        array_push_back(into, '\n');
+    }
+}
+
 
 struct Sat_propagation {
     u64 lit; s64 clause;
@@ -860,4 +922,8 @@ Sat_solution sat_solution_from_instance(
     }
     
     return sol;
+}
+
+void sat_solution_init(Sat_solution* sol) {
+    hashmap_clear(&sol->values);
 }
