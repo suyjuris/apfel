@@ -1,0 +1,204 @@
+size 8 8
+items 44
+transport_max 2
+recipe angelsore8-crystal
+  entity crystallizer
+  entity_speed 1.5
+  time 2
+  amount 1.5
+  in angels-ore8-anode-sludge
+  out angels-ore8-crystal
+recipe angelsore9-crystal
+  entity crystallizer
+  entity_speed 1.5
+  time 2
+  amount 1.5
+  in angels-ore9-anode-sludge
+  out angels-ore9-crystal
+recipe angelsore8-anode-sludge
+  entity electro-whinning-cell-2
+  entity_speed 1
+  time 2
+  amount 1.5
+  in angels-ore8-slime
+  in liquid-ferric-chloride-solution
+  out angels-ore8-anode-sludge
+  out water-yellow-waste
+  out slag
+recipe angelsore9-anode-sludge
+  entity electro-whinning-cell-2
+  entity_speed 1
+  time 2
+  amount 1.5
+  in angels-ore9-slime
+  in liquid-cupric-chloride-solution
+  out angels-ore9-anode-sludge
+  out water-yellow-waste
+  out slag
+recipe angelsore8-anode-sludge-filtering
+  entity filtration-unit
+  entity_speed 1.5
+  time 2
+  amount 1.5
+  in water-purified
+  in angels-ore8-solution
+  in filter-ceramic
+  out angels-ore8-slime
+  out water-yellow-waste
+  out filter-ceramic-used
+recipe angelsore9-anode-sludge-filtering
+  entity filtration-unit
+  entity_speed 1.5
+  time 2
+  amount 1.5
+  in filter-ceramic
+  in water-purified
+  in angels-ore9-solution
+  out filter-ceramic-used
+  out water-yellow-waste
+  out angels-ore9-slime
+recipe angelsore8-solution
+  entity ore-leaching-plant-2
+  entity_speed 1
+  time 2
+  amount 1.5
+  in angels-ore2-crystal
+  in angels-ore5-crystal
+  in angels-ore1-crystal
+  in liquid-sulfuric-acid
+  in angels-ore8-dust
+  out angels-ore8-solution
+recipe angelsore9-solution
+  entity ore-leaching-plant-2
+  entity_speed 1
+  time 2
+  amount 1.5
+  in angels-ore9-dust
+  in liquid-sulfuric-acid
+  in angels-ore6-crystal
+  in angels-ore3-crystal
+  in angels-ore4-crystal
+  out angels-ore9-solution
+recipe liquid-ferric-chloride-solution
+  entity angels-chemical-plant
+  entity_speed 1.75
+  time 2
+  amount 0.375
+  in iron-ore
+  in gas-hydrogen-chloride
+  out liquid-ferric-chloride-solution
+recipe liquid-cupric-chloride-solution
+  entity angels-chemical-plant
+  entity_speed 1.75
+  time 2
+  amount 0.375
+  in copper-ore
+  in gas-hydrogen-chloride
+  out liquid-cupric-chloride-solution
+recipe filter-ceramic-refurbish
+  entity assembling-machine-4
+  entity_speed 2
+  time 0.5
+  amount 3
+  in filter-ceramic-used
+  in water-purified
+  out filter-ceramic
+recipe angelsore9-dust
+  entity ore-floatation-cell-3
+  entity_speed 1.5
+  time 4
+  amount 1.125
+  in angels-ore9-sludge
+  in solid-sodium-hydroxide
+  out angels-ore9-dust
+  out water-yellow-waste
+recipe angelsore8-dust
+  entity ore-floatation-cell-3
+  entity_speed 1.5
+  time 4
+  amount 1.125
+  in angels-ore8-sludge
+  in solid-sodium-hydroxide
+  out water-yellow-waste
+  out angels-ore8-dust
+recipe angelsore9-sludge
+  entity angels-chemical-plant
+  entity_speed 1.75
+  time 4
+  amount 0.75
+  in angels-ore6-chunk
+  in angels-ore3-chunk
+  in angels-ore4-chunk
+  in thermal-water
+  in liquid-sulfuric-acid
+  in angels-ore9-powder
+  out angels-ore9-sludge
+recipe angelsore8-sludge
+  entity angels-chemical-plant
+  entity_speed 1.75
+  time 4
+  amount 0.75
+  in thermal-water
+  in angels-ore8-powder
+  in angels-ore5-chunk
+  in angels-ore1-chunk
+  in angels-ore2-chunk
+  in liquid-sulfuric-acid
+  out angels-ore8-sludge
+recipe thermal-extractor-water
+  entity thermal-extractor
+  entity_speed 1
+  time 5
+  amount 0.3
+  in steam
+  in solid-lithium
+  out thermal-water
+recipe algae-brown-burning
+  entity electric-furnace-2
+  entity_speed 3
+  time 7.5
+  amount 0.6
+  in algae-brown
+  out solid-lithium
+recipe algae-brown
+  entity algae-farm-3
+  entity_speed 1.5
+  time 30
+  amount 0.3
+  in water-saline
+  out algae-brown
+recipe angels-steam-water
+  entity angels-electric-boiler
+  entity_speed 1
+  time 1
+  amount 0.75
+  in water
+  out steam
+recipe total
+  in water-purified
+  in angels-ore9-powder
+  in angels-ore8-powder
+  in solid-sodium-hydroxide
+  in liquid-sulfuric-acid
+  in angels-ore5-crystal
+  in angels-ore1-crystal
+  in angels-ore6-crystal
+  in angels-ore3-crystal
+  in angels-ore4-crystal
+  in angels-ore2-crystal
+  in angels-ore5-chunk
+  in angels-ore1-chunk
+  in angels-ore2-chunk
+  in angels-ore4-chunk
+  in angels-ore3-chunk
+  in iron-ore
+  in copper-ore
+  in angels-ore6-chunk
+  in gas-hydrogen-chloride
+  in water-saline
+  in water
+  out water-yellow-waste
+  out slag
+  out angels-ore8-crystal
+  out angels-ore9-crystal
+

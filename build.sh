@@ -19,6 +19,12 @@ elif [ "$1" = "release" ]; then
     "$GXX" $CXXFLAGS -O2 platform_linux.cpp -o "$NAME" $LDFLAGS
 elif [ "$1" = "construct" ]; then
     "$GXX" $CXXFLAGS -O0 -ggdb -Werror construct.cpp -o "construct" $LDFLAGS
+elif [ "$1" = "construct_release" ]; then
+    "$GXX" $CXXFLAGS -O3 -march=native -ggdb -Werror construct.cpp -o "construct" $LDFLAGS
+elif [ "$1" = "construct_profile" ]; then
+    mkdir -p profdata
+    echo LD_PRELOAD="$LIBPROFILER" CPUPROFILE=./profdata/"construct".prof ./"construct"
+    echo pprof -http ":" "construct" profdata/"construct".prof
 else
     echo "Error: first argument must be either debug or release"
 fi;

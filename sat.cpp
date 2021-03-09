@@ -69,6 +69,8 @@ enum Constraints_basic: u64 {
     clause_noexpand,
     at_most_one,
     exactly_one,
+    at_most_k,
+    exactly_k,
     logical_and,
     implies,
     equivalent,
@@ -282,6 +284,24 @@ void sat_rewrite_basic(Sat_instance* inst, u64 op, Array_t<u64> args) {
         sat_add(inst, clause, args);
         sat_add(inst, at_most_one, args);
         break;
+        
+    case at_most_k: {
+        assert(args.size == 2);
+        u64 k = (s64)args[1];
+        u64 out = sat_temp_group_create(inst, k);
+        sat_add(inst, merge_multi, {args[0], out});
+    } break;
+
+    case exactly_k: {
+        assert(args.size == 2);
+        u64 k = (s64)args[1];
+        s64 index = inst->rewrite_temp.size;
+        for (s64 i = 0; i < k; ++i) {
+            array_push_back(&inst->rewrite_temp, var_true);
+        }
+        u64 out = sat_group(inst, array_subarray(inst->rewrite_temp, index));
+        sat_add(inst, merge_multi, {args[0], out});
+    } break;
         
     case logical_and: {
         auto lits = sat_expand_recursive(inst, args, &inst->rewrite_temp);
@@ -584,7 +604,8 @@ bool sat_explain_basic(Sat_instance* inst, u64 id, Array_t<u64> args, Array_dyn<
         assert(subtype == CONSTRAINT_BASIC);
         
         if (id == clause or id == clause_noexpand) {
-            _sat_explain_print_joined(inst, args, u8" ∨ ", into);
+            Array_t<u64> arr = sat_expand_recursive(inst, args, &inst->explain_temp);
+            _sat_explain_print_joined(inst, arr, u8" ∨ ", into);
         } else if (id == at_most_one) {
             _sat_explain_print_joined(inst, args, " + ", into);
             array_printf(into, u8" ≤ 1");
@@ -666,6 +687,16 @@ void sat_init(Sat_instance* inst) {
     inst->rewrite_temp.size = 0;
     inst->expand_temp.size = 0;
     inst->explain_temp.size = 0;
+
+    if (not inst->rewrite_temp.data) {
+        inst->rewrite_temp = array_create_unreserved<u64>(128 * 1024 * 1024);
+    }
+    if (not inst->expand_temp.data) {
+        inst->expand_temp  = array_create_unreserved<u64>(1024 * 1024);
+    }
+    if (not inst->explain_temp.data) {
+        inst->explain_temp = array_create_unreserved<u64>(1024 * 1024);
+    }
     
     array_memset(&inst->rewrite_funcs);
     array_memset(&inst->expand_funcs);
@@ -695,15 +726,6 @@ void sat_init(Sat_instance* inst) {
     sat_add(inst, Sat::clause, {~Sat::var_false});
     sat_add(inst, Sat::clause, {Sat::var_true});
 
-    if (not inst->rewrite_temp.data) {
-        inst->rewrite_temp = array_create_unreserved<u64>(128 * 1024 * 1024);
-    }
-    if (not inst->expand_temp.data) {
-        inst->expand_temp  = array_create_unreserved<u64>(1024 * 1024);
-    }
-    if (not inst->explain_temp.data) {
-        inst->explain_temp = array_create_unreserved<u64>(1024 * 1024);
-    }
 }
 
 struct Sat_dimacs {
@@ -842,13 +864,24 @@ void sat_solution_write_human(Sat_instance* inst, Sat_solution* sol, Array_dyn<u
     }
 }
 
+void sat_solution_write(Sat_instance* inst, Sat_solution* sol, Array_dyn<u64>* into) {
+    array_push_back(into, 0);
+    for (auto slot: sol->values.slots) {
+        if (slot.key == sol->values.empty) continue;
+        u64 lit = slot.key;
+        if (not slot.val) lit ^= (u64)-1;
+        array_push_back(into, lit);
+    }
+    (*into)[0] = into->size-1;
+}
+
 
 struct Sat_propagation {
     u64 lit; s64 clause;
 };
 
 Sat_solution sat_solution_from_instance(
-    Sat_instance* inst, Array_dyn<s64>* out_offsets = nullptr, Array_dyn<Sat_propagation>* out_props = nullptr
+    Sat_instance* inst, Array_dyn<s64>* out_offsets=nullptr, Array_dyn<Sat_propagation>* out_props=nullptr
 ) {
     if (out_offsets or out_props) {
         assert(out_offsets and out_props);
@@ -859,7 +892,8 @@ Sat_solution sat_solution_from_instance(
     
     Sat_solution sol;
 
-    Array_dyn<s64> clauses, mark_for_entry;
+    Array_dyn<s64> clauses;
+    Array_dyn<Sat_propagation> mark_for_entry;
     array_reserve(&clauses, inst->clause_offsets.size-1);
     defer { array_free(&clauses); };
     defer { array_free(&mark_for_entry); };
@@ -901,11 +935,10 @@ Sat_solution sat_solution_from_instance(
             }
 
             if (prop) {
-                array_push_back(&mark_for_entry, prop);
-                if (out_props) array_push_back(out_props, {prop, i});
+                array_push_back(&mark_for_entry, {prop, i});
                 dirty = true;
             } else if (clause_is_false) {
-                if (out_props) array_push_back(out_props, {Sat::var_false, i});
+                array_push_back(&mark_for_entry, {Sat::var_false, i});
                 dirty = true;
             }
             
@@ -915,7 +948,14 @@ Sat_solution sat_solution_from_instance(
         }
         clauses.size = i_out;
 
-        for (u64 prop: mark_for_entry) sol.set(prop);
+        for (auto prop: mark_for_entry) {
+            if (sol.get(prop.lit) == Sat_solution::L_FALSE) {
+                if (out_props) array_push_back(out_props, {Sat::var_false, prop.clause});
+            } else {
+                if (out_props) array_push_back(out_props, prop);
+                sol.set(prop.lit);
+            }
+        }
         mark_for_entry.size = 0;
         
         if (out_offsets and dirty) array_push_back(out_offsets, out_props->size);
@@ -924,6 +964,84 @@ Sat_solution sat_solution_from_instance(
     return sol;
 }
 
+bool sat_solution_propagations_conflict_only(
+    Sat_instance* inst, Array_dyn<Sat_propagation>* inout_props=nullptr
+) {
+    s64 index = -1;
+    for (s64 i = 0; i < inout_props->size; ++i) {
+        if ((*inout_props)[i].lit == Sat::var_false) {
+            index = i; break;
+        }
+    }
+    if (index == -1) return false;
+    inout_props->size = index+1;
+
+    Hashmap<bool> lits_needed;
+    defer { hashmap_free(&lits_needed); };
+    {auto clause = array_subindex(inst->clause_offsets, inst->clause_literals, inout_props->back().clause);
+    for (u64 lit: clause) hashmap_set(&lits_needed, ~lit, true);}
+
+    Array_dyn<s64> props_needed;
+    array_push_back(&props_needed, inout_props->size-1);
+    defer { array_free(&props_needed); };
+    
+    for (s64 i = inout_props->size-2; i >= 0; --i) {
+        auto prop = (*inout_props)[i];
+        if (hashmap_getptr(&lits_needed, prop.lit)) {
+            auto clause = array_subindex(inst->clause_offsets, inst->clause_literals, prop.clause);
+            for (u64 lit: clause) {
+                if (lit == prop.lit) continue;
+                hashmap_set(&lits_needed, ~lit, true);
+            }
+            array_push_back(&props_needed, i);
+        }
+    }
+
+    s64 size = 0;
+    for (s64 i = props_needed.size-1; i >= 0; --i) {
+        (*inout_props)[size++] = (*inout_props)[props_needed[i]];
+    }
+    inout_props->size = size;
+    return true;
+}
+
+
+void sat_solution_propagations_print(Sat_instance* inst, Array_t<Sat_propagation> props, Array_dyn<u8>* into) {
+    for (auto prop: props) {
+        auto clause = array_subindex(inst->clause_offsets, inst->clause_literals, prop.clause);
+        sat_explain(inst, prop.lit, into);
+        array_push_back(into, '\n');
+        if (clause.size == 1) {
+            // nothing
+        } else {
+            s64 constraint = inst->clause_constraint[prop.clause];
+            while (constraint != -1) {
+                array_printf(into, u8" ↳ ");
+                sat_explain_constraint(inst, constraint, into);
+                constraint = inst->constraint_parent[constraint];
+                array_push_back(into, '\n');
+            }
+        }
+    }
+}
+
 void sat_solution_init(Sat_solution* sol) {
     hashmap_clear(&sol->values);
+}
+void sat_solution_free(Sat_solution* sol) {
+    hashmap_free(&sol->values);
+}
+
+struct Sat_proof {
+    Array_dyn<s64> offsets;
+    Array_dyn<u64> data;
+};
+
+
+void sat_proof_print(Sat_instance* inst, Sat_proof* proof, Array_dyn<u8>* into) {
+    for (s64 i = 0; i+1 < proof->offsets.size; ++i) {
+        auto clause = array_subindex(proof->offsets, proof->data, i);
+        _sat_explain_print_joined(inst, clause, ", ", into);
+        array_push_back(into, '\n');
+    }
 }

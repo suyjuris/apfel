@@ -1,7 +1,8 @@
 
 
-size 5 5
+size 3 3
 items 10
+transport_max 1
 recipe tinned_copper_wire
   in copper_wire
   in tin_plate
@@ -26,8 +27,10 @@ recipe copper_sheet_coil
   in coolant
   out copper_sheet_coil
   out coolant_used
+  
 recipe total
   in molten_copper
   in molten_tin
   in coolant
+  out tinned_copper_wire
   out coolant_used
