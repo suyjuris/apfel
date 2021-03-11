@@ -1,6 +1,10 @@
 size 14 14
 items 152
-transport_max 10
+
+partition_size 3 2
+transport_max 6
+partition_max 20
+
 recipe crystal-full-cutting
   entity assembling-machine-5
   entity_speed 2.75

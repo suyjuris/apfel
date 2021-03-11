@@ -2,7 +2,11 @@
 
 size 3 3
 items 10
+
+partition_size 2 2
 transport_max 1
+partition_max 2
+
 recipe tinned_copper_wire
   in copper_wire
   in tin_plate

@@ -1,6 +1,10 @@
 size 8 8
 items 44
-transport_max 2
+
+partition_size 2 2
+transport_max 4
+partition_max 5
+
 recipe angelsore8-crystal
   entity crystallizer
   entity_speed 1.5
