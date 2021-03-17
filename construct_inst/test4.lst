@@ -1,0 +1,409 @@
+size 10 10
+items 76
+
+partition_size 2 2
+transport_max 6
+partition_max 13
+
+recipe bob-roboport-4
+  entity assembling-machine-6
+  entity_speed 3.5
+  time 10
+  amount 0.02
+  in bob-roboport-3
+  in roboport-door-4
+  in roboport-antenna-4
+  in roboport-chargepad-4
+  in nitinol-alloy
+  out bob-roboport-4
+recipe roboport-antenna-4
+  entity assembling-machine-6
+  entity_speed 3.5
+  time 0.2
+  amount 0.099999994
+  in advanced-processing-unit
+  in nickel-plate
+  in gold-plate
+  in gilded-copper-cable
+  out roboport-antenna-4
+recipe roboport-chargepad-4
+  entity assembling-machine-6
+  entity_speed 3.5
+  time 1
+  amount 0.08
+  in advanced-processing-unit
+  in silver-zinc-battery
+  in nitinol-alloy
+  out roboport-chargepad-4
+recipe roboport-door-4
+  entity assembling-machine-6
+  entity_speed 3.5
+  time 1
+  amount 0.02
+  in nitinol-alloy
+  in nitinol-gear-wheel
+  in nitinol-bearing
+  out roboport-door-4
+recipe bob-roboport-3
+  entity assembling-machine-6
+  entity_speed 3.5
+  time 10
+  amount 0.02
+  in bob-roboport-2
+  in roboport-antenna-3
+  in roboport-chargepad-3
+  in roboport-door-3
+  in titanium-plate
+  out bob-roboport-3
+recipe roboport-antenna-3
+  entity assembling-machine-6
+  entity_speed 3.5
+  time 0.2
+  amount 0.099999994
+  in processing-unit
+  in nickel-plate
+  in insulated-cable
+  out roboport-antenna-3
+recipe roboport-chargepad-3
+  entity assembling-machine-6
+  entity_speed 3.5
+  time 1
+  amount 0.08
+  in processing-unit
+  in lithium-ion-battery
+  in titanium-plate
+  out roboport-chargepad-3
+recipe roboport-door-3
+  entity assembling-machine-6
+  entity_speed 3.5
+  time 1
+  amount 0.02
+  in titanium-gear-wheel
+  in titanium-bearing
+  in titanium-plate
+  out roboport-door-3
+recipe bob-roboport-2
+  entity assembling-machine-6
+  entity_speed 3.5
+  time 10
+  amount 0.02
+  in roboport-door-2
+  in roboport-chargepad-2
+  in aluminium-plate
+  in roboport
+  in roboport-antenna-2
+  out bob-roboport-2
+recipe roboport-antenna-2
+  entity assembling-machine-6
+  entity_speed 3.5
+  time 0.2
+  amount 0.099999994
+  in aluminium-plate
+  in tinned-copper-cable
+  in advanced-circuit
+  out roboport-antenna-2
+recipe roboport-chargepad-2
+  entity assembling-machine-6
+  entity_speed 3.5
+  time 1
+  amount 0.08
+  in battery
+  in advanced-circuit
+  in invar-alloy
+  out roboport-chargepad-2
+recipe roboport-door-2
+  entity assembling-machine-6
+  entity_speed 3.5
+  time 1
+  amount 0.02
+  in brass-gear-wheel
+  in steel-bearing
+  in invar-alloy
+  out roboport-door-2
+recipe roboport
+  entity assembling-machine-6
+  entity_speed 3.5
+  time 5
+  amount 0.02
+  in roboport-antenna-1
+  in steel-plate
+  in roboport-chargepad-1
+  in roboport-door-1
+  out roboport
+recipe roboport-antenna-1
+  entity assembling-machine-6
+  entity_speed 3.5
+  time 0.2
+  amount 0.099999994
+  in steel-plate
+  in copper-cable
+  in advanced-circuit
+  out roboport-antenna-1
+recipe roboport-chargepad-1
+  entity assembling-machine-6
+  entity_speed 3.5
+  time 1
+  amount 0.08
+  in steel-plate
+  in advanced-circuit
+  out roboport-chargepad-1
+recipe roboport-door-1
+  entity assembling-machine-6
+  entity_speed 3.5
+  time 1
+  amount 0.02
+  in steel-plate
+  in iron-gear-wheel
+  out roboport-door-1
+recipe silver-zinc-battery
+  entity angels-chemical-plant-4
+  entity_speed 3.25
+  time 5
+  amount 0.16
+  in zinc-plate
+  in plastic-bar
+  in solid-sodium-hydroxide
+  in silver-oxide
+  out silver-zinc-battery
+recipe silver-oxide
+  entity angels-chemical-plant-4
+  entity_speed 3.25
+  time 5
+  amount 0.16
+  in solid-sodium-hydroxide
+  in silver-nitrate
+  out silver-oxide
+recipe processed-silver-smelting
+  entity liquifier-4
+  entity_speed 3.75
+  time 4
+  amount 0.013333333
+  in processed-silver
+  in liquid-nitric-acid
+  out silver-nitrate
+recipe lithium-ion-battery
+  entity angels-chemical-plant-4
+  entity_speed 3.25
+  time 5
+  amount 0.16
+  in solid-carbon
+  in plastic-bar
+  in lithium-cobalt-oxide
+  in lithium-perchlorate
+  out lithium-ion-battery
+recipe lithium-cobalt-oxide
+  entity angels-chemical-furnace-4
+  entity_speed 3
+  time 7
+  amount 0.08
+  in lithium
+  in cobalt-oxide
+  out lithium-cobalt-oxide
+recipe lithium-water-electrolysis
+  entity angels-electrolyser-4
+  entity_speed 2.5
+  time 1
+  amount 0.32
+  in solid-lithium
+  in solid-sodium-perchlorate
+  out gas-hydrogen
+  out lithium-perchlorate
+  out solid-salt
+recipe battery
+  entity angels-chemical-plant-4
+  entity_speed 3.25
+  time 4
+  amount 0.16
+  in plastic-bar
+  in lead-plate
+  in liquid-sulfuric-acid
+  out battery
+recipe nitinol-bearing
+  entity assembling-machine-6
+  entity_speed 3.5
+  time 0.5
+  amount 0.19999999
+  in nitinol-bearing-ball
+  in nitinol-alloy
+  in lubricant
+  out nitinol-bearing
+recipe nitinol-bearing-ball
+  entity assembling-machine-6
+  entity_speed 3.5
+  time 0.5
+  amount 0.26666665
+  in nitinol-alloy
+  out nitinol-bearing-ball
+recipe nitinol-gear-wheel
+  entity assembling-machine-6
+  entity_speed 3.5
+  time 0.5
+  amount 0.39999998
+  in nitinol-alloy
+  out nitinol-gear-wheel
+recipe steel-bearing
+  entity assembling-machine-6
+  entity_speed 3.5
+  time 0.5
+  amount 0.19999999
+  in steel-plate
+  in steel-bearing-ball
+  out steel-bearing
+recipe steel-bearing-ball
+  entity assembling-machine-6
+  entity_speed 3.5
+  time 0.5
+  amount 0.26666665
+  in steel-plate
+  out steel-bearing-ball
+recipe titanium-gear-wheel
+  entity assembling-machine-6
+  entity_speed 3.5
+  time 0.5
+  amount 0.39999998
+  in titanium-plate
+  out titanium-gear-wheel
+recipe titanium-bearing
+  entity assembling-machine-6
+  entity_speed 3.5
+  time 0.5
+  amount 0.19999999
+  in titanium-bearing-ball
+  in titanium-plate
+  in lubricant
+  out titanium-bearing
+recipe titanium-bearing-ball
+  entity assembling-machine-6
+  entity_speed 3.5
+  time 0.5
+  amount 0.26666665
+  in titanium-plate
+  out titanium-bearing-ball
+recipe brass-gear-wheel
+  entity assembling-machine-6
+  entity_speed 3.5
+  time 0.5
+  amount 0.39999998
+  in brass-alloy
+  out brass-gear-wheel
+recipe lithium
+  entity angels-electrolyser-4
+  entity_speed 2.5
+  time 3.2
+  amount 0.08
+  in solid-lithium
+  out lithium
+recipe algae-brown-burning
+  entity electric-furnace-3
+  entity_speed 4
+  time 7.5
+  amount 0.39999998
+  in algae-brown
+  out solid-lithium
+recipe solid-sodium-perchlorate
+  entity liquifier-4
+  entity_speed 3.75
+  time 2
+  amount 0.063999996
+  in water-purified
+  in catalyst-metal-blue
+  in solid-sodium-chlorate
+  out solid-sodium-perchlorate
+  out catalyst-metal-carrier
+recipe solid-sodium-chlorate
+  entity angels-chemical-plant-4
+  entity_speed 3.25
+  time 2
+  amount 0.063999996
+  in gas-hydrogen-chloride
+  in liquid-aqueous-sodium-hydroxide
+  out solid-sodium-chlorate
+recipe liquid-aqueous-sodium-hydroxide
+  entity liquifier-4
+  entity_speed 3.75
+  time 2
+  amount 0.063999996
+  in solid-sodium-hydroxide
+  in water-purified
+  out liquid-aqueous-sodium-hydroxide
+recipe algae-brown
+  entity algae-farm-3
+  entity_speed 1.5
+  time 30
+  amount 0.19999999
+  in water-saline
+  out algae-brown
+recipe catalyst-metal-blue
+  entity assembling-machine-6
+  entity_speed 3.5
+  time 2
+  amount 0.0064
+  in rutile-ore
+  in catalyst-metal-carrier
+  in cobalt-ore
+  out catalyst-metal-blue
+recipe insulated-cable
+  entity electronics-machine-3
+  entity_speed 4
+  time 0.5
+  amount 0.099999994
+  in tinned-copper-cable
+  in rubber
+  out insulated-cable
+recipe angels-wire-coil-tin-converting
+  entity electronics-machine-3
+  entity_speed 4
+  time 1
+  amount 0.024999999
+  in angels-wire-coil-tin
+  out tinned-copper-cable
+recipe angels-wire-coil-copper-converting
+  entity electronics-machine-3
+  entity_speed 4
+  time 1
+  amount 0.037499998
+  in angels-wire-coil-copper
+  out copper-cable
+recipe angels-wire-gold
+  entity electronics-machine-3
+  entity_speed 4
+  time 0.5
+  amount 0.04
+  in gold-plate
+  in copper-cable
+  out gilded-copper-cable
+recipe total
+  in advanced-circuit
+  in nitinol-alloy
+  in titanium-plate
+  in steel-plate
+  in advanced-processing-unit
+  in processing-unit
+  in solid-sodium-hydroxide
+  in plastic-bar
+  in invar-alloy
+  in water-saline
+  in aluminium-plate
+  in iron-gear-wheel
+  in brass-alloy
+  in lead-plate
+  in gold-plate
+  in nickel-plate
+  in zinc-plate
+  in solid-carbon
+  in angels-wire-coil-copper
+  in water-purified
+  in rubber
+  in angels-wire-coil-tin
+  in lubricant
+  in cobalt-oxide
+  in liquid-sulfuric-acid
+  in gas-hydrogen-chloride
+  in processed-silver
+  in liquid-nitric-acid
+  in rutile-ore
+  in cobalt-ore
+  out gas-hydrogen
+  out solid-salt
+  out bob-roboport-4
+

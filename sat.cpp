@@ -37,6 +37,7 @@ struct Sat_instance {
     Hashmap<s64> params;
 
     u64 debug_forbidden_id;
+    s64 debug_forbidden_clause;
     bool debug_explain_vars_raw;
 };
 
@@ -254,6 +255,7 @@ void sat_rewrite_basic(Sat_instance* inst, u64 op, Array_t<u64> args) {
         auto context = array_subindex(inst->context_offsets, inst->context_data, inst->context_stack.back());
         for (u64 lit: context) array_push_back(&inst->clause_literals, ~lit);
         sat_expand_recursive(inst, args, &inst->clause_literals);
+        assert(inst->clause_constraint.size != inst->debug_forbidden_clause);
         array_push_back(&inst->clause_constraint, inst->constraint_parent_stack.back());
         array_push_back(&inst->clause_offsets, inst->clause_literals.size);
     } break;
@@ -267,6 +269,7 @@ void sat_rewrite_basic(Sat_instance* inst, u64 op, Array_t<u64> args) {
         auto context = array_subindex(inst->context_offsets, inst->context_data, inst->context_stack.back());
         for (u64 lit: context) array_push_back(&inst->clause_literals, ~lit);
         array_append(&inst->clause_literals, args);
+        assert(inst->clause_constraint.size != inst->debug_forbidden_clause);
         array_push_back(&inst->clause_constraint, inst->constraint_parent_stack.back());
         array_push_back(&inst->clause_offsets, inst->clause_literals.size);
     } break;
@@ -286,10 +289,36 @@ void sat_rewrite_basic(Sat_instance* inst, u64 op, Array_t<u64> args) {
         break;
         
     case at_most_k: {
+        // Sequential counter
+        // See: SAT Encodings of the At-Most-k Constraint, Alan Frish and Paul Giannaros
         assert(args.size == 2);
+        auto arr = sat_expand(inst, args[0], &inst->rewrite_temp);
         u64 k = (s64)args[1];
-        u64 out = sat_temp_group_create(inst, k);
-        sat_add(inst, merge_multi, {args[0], out});
+        //u64 out = sat_temp_group_create(inst, k);
+        //sat_add(inst, merge_multi, {args[0], out});
+        //break;
+        
+        u64 base = sat_temp_create(inst, arr.size * k);
+        
+        for (s64 i = 0; i+1 < arr.size; ++i) {
+            sat_add(inst, implies, {arr[i], base + i*k});
+        }
+        for (s64 j = 1; j < k; ++j) {
+            sat_add(inst, clause, {~(base + j)});
+        }
+        for (s64 i = 1; i+1 < arr.size; ++i) {
+            for (s64 j = 0; j < k; ++j) {
+                sat_add(inst, implies, {base + (i-1)*k + j, base + i*k + j});
+            }
+        }
+        for (s64 i = 1; i+1 < arr.size; ++i) {
+            for (s64 j = 1; j < k; ++j) {
+                sat_add(inst, clause, {~arr[i], ~(base + (i-1)*k + j-1), base + i*k + j});
+            }
+        }
+        for (s64 i = 1; i < arr.size; ++i) {
+            sat_add(inst, implies, {arr[i], ~(base + (i-1)*k + k-1)});
+        }
     } break;
 
     case exactly_k: {
@@ -305,9 +334,30 @@ void sat_rewrite_basic(Sat_instance* inst, u64 op, Array_t<u64> args) {
         
     case logical_and: {
         auto lits = sat_expand_recursive(inst, args, &inst->rewrite_temp);
+        auto context = array_subindex(inst->context_offsets, inst->context_data, inst->context_stack.back());
+
+        s64 lits_to_write = (context.size + 1) * lits.size;
+        array_reserve(&inst->clause_literals, inst->clause_literals.size + lits_to_write);
+        u64* p = inst->clause_literals.data + inst->clause_literals.size;
+
+        array_reserve(&inst->clause_constraint, inst->clause_constraint.size + lits.size);
+        array_reserve(&inst->clause_offsets,    inst->clause_offsets.size    + lits.size);
+
+        s64 parent = inst->constraint_parent_stack.back();
+        
         for (u64 lit: lits) {
-            sat_add(inst, clause_noexpand, {lit});
+            memcpy(p, context.data, context.size * sizeof(context[0]));
+            for (s64 i = 0; i < context.size; ++i) *p = ~*p;
+            p += context.size;
+            *p++ = lit;
+            inst->clause_literals.size += context.size + 1;
+            
+            assert(inst->clause_constraint.size != inst->debug_forbidden_clause);
+            inst->clause_constraint.data[inst->clause_constraint.size++] = parent;
+            inst->clause_offsets.data[inst->clause_offsets.size++] = inst->clause_literals.size;
         }
+
+        assert(p == inst->clause_literals.end());
     } break;
 
     case implies:
@@ -703,6 +753,7 @@ void sat_init(Sat_instance* inst) {
     hashmap_clear(&inst->explain_funcs);
     hashmap_clear(&inst->params);
     inst->debug_forbidden_id = 0x10ull << 56;
+    inst->debug_forbidden_clause = -1;
     inst->debug_explain_vars_raw = false;
     
     array_push_back(&inst->clause_offsets, 0ll);
@@ -735,40 +786,77 @@ struct Sat_dimacs {
 };
 
 void sat_write_dimacs(Sat_instance* inst, Sat_dimacs* dimacs) {
+    static const u16* lookup = (u16*)
+        "0001020304050607080910111213141516171819202122232425262728293031323334353637383940414243444546474849"
+        "5051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899";
     hashmap_clear(&dimacs->map_forth);
     dimacs->map_back.size = 0;
     dimacs->text.size = 0;
     
     array_push_back(&dimacs->map_back, 0ull);
 
-    for (s64 i = 0; i+1 < inst->clause_offsets.size; ++i) {
-        for (u64 lit: array_subindex(inst->clause_offsets, inst->clause_literals, i)) {
-            u64 var = lit >> 63 ? ~lit : lit;
-
-            s64* mapped = hashmap_getcreate(&dimacs->map_forth, var, 0ll);
-            if (*mapped == 0) {
-                *mapped = dimacs->map_back.size;
-                array_push_back(&dimacs->map_back, var);
-            }
-        }
-    }
-
-    array_printf(&dimacs->text, "p cnf %d %d\n", dimacs->map_forth.size, inst->clause_offsets.size-1);
+    array_printf(&dimacs->text, "p cnf ");
+    s64 patch_var_count_offset = dimacs->text.size;
+    array_printf(&dimacs->text, "%20s %lld\n", "", inst->clause_offsets.size-1);
     
     for (s64 i = 0; i+1 < inst->clause_offsets.size; ++i) {
         Array_t<u64> clause = array_subindex(inst->clause_offsets, inst->clause_literals, i);
+        s64 maximum_size = dimacs->text.size + 22 * clause.size + 8;
+        array_reserve(&dimacs->text, maximum_size);
 
         for (u64 lit: clause) {
             bool neg = lit >> 63;
             u64 var = neg ? ~lit : lit;
 
-            s64 mapped = hashmap_get(&dimacs->map_forth, var);
+            s64* mapped_ptr = hashmap_getcreate(&dimacs->map_forth, var, 0ll);
+            if (*mapped_ptr == 0) {
+                *mapped_ptr = dimacs->map_back.size;
+                array_push_back(&dimacs->map_back, var);
+            }
+            s64 mapped = *mapped_ptr;
 
-            s64 dilit = neg ? -mapped : mapped;
-            array_printf(&dimacs->text, "%lld ", dilit);
+            if (neg) dimacs->text.data[dimacs->text.size++] = '-';
+#if 1
+            s64 width = (174082924800ull - __builtin_clzll(mapped) * 2585827972ull) >> 33;
+            u8* p0 = dimacs->text.data + dimacs->text.size;
+            u16* p = (u16*)p0;
+
+            s64 x = width&1 ? mapped / 10 : mapped;
+            switch (width/2) {
+            case 5: *p++ = lookup[x / 100000000]; // fall-through
+            case 4: *p++ = lookup[x / 1000000 % 100]; // fall-through
+            case 3: *p++ = lookup[x / 10000   % 100]; // fall-through
+            case 2: *p++ = lookup[x / 100     % 100]; // fall-through
+            case 1: *p++ = lookup[x           % 100];
+            }
+            if (width&1) *(u8*)p = '0' + mapped % 10;
+            if (*p0 == '0') {*p0 = '-'; p0[-neg] = ' ';}
+            dimacs->text.size += width;
+#else
+            s64 width = 0;
+            for (s64 i = mapped; i; i /= 10) ++width;
+            
+            //s64 width = (174082924800ull - __builtin_clzll(mapped) * 2585827972ull) >> 33;
+            dimacs->text.size += width;
+
+            for (s64 i = 0; i < width; ++i) {
+                dimacs->text.data[dimacs->text.size-1 - i] = '0' + mapped % 10;
+                mapped /= 10;
+            }
+#endif
+            
+            dimacs->text.data[dimacs->text.size++] = ' ';
         }
-        array_printf(&dimacs->text, "0\n");
+
+        dimacs->text.data[dimacs->text.size++] = '0';
+        dimacs->text.data[dimacs->text.size++] = '\n';
+
+        assert(dimacs->text.size <= maximum_size);
     }
+
+    s64 n = snprintf((char*)(dimacs->text.data + patch_var_count_offset), 20, "%lld", dimacs->map_forth.size);
+    assert(n < 20);
+    dimacs->text.data[patch_var_count_offset + n] = ' ';
 }
 
 void sat_dimacs_free(Sat_dimacs* dimacs) {
@@ -864,7 +952,7 @@ void sat_solution_write_human(Sat_instance* inst, Sat_solution* sol, Array_dyn<u
     }
 }
 
-void sat_solution_write(Sat_instance* inst, Sat_solution* sol, Array_dyn<u64>* into) {
+void sat_solution_write(Sat_solution* sol, Array_dyn<u64>* into) {
     array_push_back(into, 0);
     for (auto slot: sol->values.slots) {
         if (slot.key == sol->values.empty) continue;
@@ -874,7 +962,6 @@ void sat_solution_write(Sat_instance* inst, Sat_solution* sol, Array_dyn<u64>* i
     }
     (*into)[0] = into->size-1;
 }
-
 
 struct Sat_propagation {
     u64 lit; s64 clause;
@@ -1010,7 +1097,7 @@ void sat_solution_propagations_print(Sat_instance* inst, Array_t<Sat_propagation
     for (auto prop: props) {
         auto clause = array_subindex(inst->clause_offsets, inst->clause_literals, prop.clause);
         sat_explain(inst, prop.lit, into);
-        array_push_back(into, '\n');
+        array_printf(into, "\t\t\t\t[lit=%llx,clause=%lld]\n", prop.lit, prop.clause);
         if (clause.size == 1) {
             // nothing
         } else {
@@ -1041,6 +1128,7 @@ struct Sat_proof {
 void sat_proof_print(Sat_instance* inst, Sat_proof* proof, Array_dyn<u8>* into) {
     for (s64 i = 0; i+1 < proof->offsets.size; ++i) {
         auto clause = array_subindex(proof->offsets, proof->data, i);
+        if (clause.size == 1) array_printf(into, "* ");
         _sat_explain_print_joined(inst, clause, ", ", into);
         array_push_back(into, '\n');
     }

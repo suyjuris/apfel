@@ -172,6 +172,7 @@ Array_t<u8> array_create_str(const char* str) {
     return {(u8*)str, (s64)strlen(str)};
 }
 
+
 // Free the memory, re-initialise the array.
 template <typename T>
 void array_free(Array_t<T>* arr) {
