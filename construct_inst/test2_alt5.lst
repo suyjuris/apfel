@@ -1,11 +1,9 @@
-size 21 14
-items 150
+size 18 15
+items 152
 
-partition_size 3 2
+partition_size 3 3
 transport_max 10
-partition_max 25
-
-sparsecut_maxsize 16
+partition_max 15
 
 recipe crystal-full-cutting
   entity assembling-machine-5
@@ -13,47 +11,47 @@ recipe crystal-full-cutting
   time 2
   amount 0.48511627
   in crystal-full-raw
-  out crystal-full-blue-cut
   out crystal-full-red-cut
-  out crystal-full-green-cut
+  out crystal-full-blue-cut
   out crystal-powder
+  out crystal-full-green-cut
 recipe crystal-full-blue
   entity assembling-machine-5
   entity_speed 2.75
   time 2
   amount 0.48511627
+  in crystal-full-blue-cut
   in crystal-grindstone
   in crystal-slurry
-  in crystal-full-blue-cut
-  out crystal-grindstone
   out crystal-full-blue
+  out crystal-grindstone
 recipe crystal-full-green
   entity assembling-machine-5
   entity_speed 2.75
   time 2
   amount 0.42
   in crystal-grindstone
-  in crystal-slurry
   in crystal-full-green-cut
-  out crystal-grindstone
+  in crystal-slurry
   out crystal-full-green
+  out crystal-grindstone
 recipe crystal-full-red
   entity assembling-machine-5
   entity_speed 2.75
   time 2
   amount 0.48511627
-  in crystal-grindstone
   in crystal-full-red-cut
+  in crystal-grindstone
   in crystal-slurry
-  out crystal-grindstone
   out crystal-full-red
+  out crystal-grindstone
 recipe crystal-full-harmonic
   entity assembling-machine-5
   entity_speed 2.75
   time 2
   amount 0.02
-  in crystal-full-red
   in crystal-full-blue
+  in crystal-full-red
   in crystal-full-green
   out crystal-full-harmonic
 recipe crystal-powder-full-green
@@ -63,46 +61,46 @@ recipe crystal-powder-full-green
   amount 0.0130232535
   in crystal-full-green-cut
   in milling-drum
-  out milling-drum-used
   out crystal-powder
+  out milling-drum-used
 recipe crystal-shard-cutting
   entity assembling-machine-5
   entity_speed 2.75
   time 2
   amount 0.48511627
   in crystal-shard-raw
-  out crystal-shard-red-cut
   out crystal-powder
-  out crystal-shard-green-cut
   out crystal-shard-blue-cut
+  out crystal-shard-green-cut
+  out crystal-shard-red-cut
 recipe crystal-shard-red
   entity assembling-machine-5
   entity_speed 2.75
   time 2
   amount 0.48511627
+  in crystal-shard-red-cut
   in crystal-grindstone
   in crystal-slurry
-  in crystal-shard-red-cut
-  out crystal-grindstone
   out crystal-shard-red
+  out crystal-grindstone
 recipe crystal-shard-green
   entity assembling-machine-5
   entity_speed 2.75
   time 2
   amount 0.42
   in crystal-grindstone
-  in crystal-slurry
   in crystal-shard-green-cut
-  out crystal-grindstone
+  in crystal-slurry
   out crystal-shard-green
+  out crystal-grindstone
 recipe crystal-shard-blue
   entity assembling-machine-5
   entity_speed 2.75
   time 2
   amount 0.48511627
   in crystal-grindstone
-  in crystal-slurry
   in crystal-shard-blue-cut
+  in crystal-slurry
   out crystal-shard-blue
   out crystal-grindstone
 recipe crystal-shard-harmonic
@@ -110,9 +108,9 @@ recipe crystal-shard-harmonic
   entity_speed 2.75
   time 2
   amount 0.02
-  in crystal-shard-blue
-  in crystal-shard-red
   in crystal-shard-green
+  in crystal-shard-red
+  in crystal-shard-blue
   out crystal-shard-harmonic
 recipe crystal-powder-shard-green
   entity ore-powderizer-3
@@ -121,46 +119,46 @@ recipe crystal-powder-shard-green
   amount 0.0130232535
   in crystal-shard-green-cut
   in milling-drum
-  out milling-drum-used
   out crystal-powder
+  out milling-drum-used
 recipe crystal-splinter-cutting
   entity assembling-machine-5
   entity_speed 2.75
   time 2
   amount 1.880465
   in crystal-splinter-raw
-  out crystal-splinter-red-cut
-  out crystal-powder
-  out crystal-splinter-blue-cut
   out crystal-splinter-green-cut
+  out crystal-splinter-blue-cut
+  out crystal-powder
+  out crystal-splinter-red-cut
 recipe crystal-splinter-blue
   entity assembling-machine-5
   entity_speed 2.75
   time 2
   amount 1.880465
+  in crystal-splinter-blue-cut
   in crystal-grindstone
   in crystal-slurry
-  in crystal-splinter-blue-cut
-  out crystal-grindstone
   out crystal-splinter-blue
+  out crystal-grindstone
 recipe crystal-splinter-red
   entity assembling-machine-5
   entity_speed 2.75
   time 2
   amount 1.880465
+  in crystal-splinter-red-cut
   in crystal-grindstone
   in crystal-slurry
-  in crystal-splinter-red-cut
-  out crystal-grindstone
   out crystal-splinter-red
+  out crystal-grindstone
 recipe crystal-splinter-green
   entity assembling-machine-5
   entity_speed 2.75
   time 2
-  amount 1.62
+  amount 0.02
+  in crystal-splinter-green-cut
   in crystal-grindstone
   in crystal-slurry
-  in crystal-splinter-green-cut
   out crystal-splinter-green
   out crystal-grindstone
 recipe crystal-splinter-harmonic
@@ -168,56 +166,56 @@ recipe crystal-splinter-harmonic
   entity_speed 2.75
   time 2
   amount 0.02
+  in crystal-splinter-red
   in crystal-splinter-blue
   in crystal-splinter-green
-  in crystal-splinter-red
   out crystal-splinter-harmonic
 recipe crystal-powder-splinter-green
   entity ore-powderizer-3
   entity_speed 3
   time 2
-  amount 0.052093014
+  amount 0.37209302
   in crystal-splinter-green-cut
   in milling-drum
-  out milling-drum-used
   out crystal-powder
+  out milling-drum-used
 recipe crystal-powder-slurry
   entity liquifier-4
   entity_speed 3.75
   time 2
-  amount 0.71627915
-  in water-purified
+  amount 2.8496125
   in crystal-powder
+  in water-purified
   out crystal-slurry
 recipe crystal-grindstone
   entity assembling-machine-5
   entity_speed 2.75
   time 2
-  amount 2.720465
-  in grinding-wheel
+  amount 2.1871316
   in crystal-powder
+  in grinding-wheel
   out crystal-grindstone
 recipe grinding-wheel
   entity assembling-machine-5
   entity_speed 2.75
   time 2
-  amount 1.4071075
-  in steel-plate
+  amount 1.1404408
   in silicon-carbide
+  in steel-plate
   out grinding-wheel
 recipe silicon-carbide
   entity angels-chemical-furnace-3
   entity_speed 2
   time 7
-  amount 3.5177686
-  in solid-carbon
+  amount 2.8511019
   in silicon-powder
+  in solid-carbon
   out silicon-carbide
 recipe geode-lightgreen-liquify
   entity liquifier-4
   entity_speed 3.75
   time 3
-  amount 0.052021705
+  amount 0.034243926
   in geode-lightgreen
   in liquid-sulfuric-acid
   out crystal-slurry
@@ -225,23 +223,23 @@ recipe geode-cyan-liquify
   entity liquifier-4
   entity_speed 3.75
   time 3
-  amount 0.052021705
-  in geode-cyan
+  amount 0.034243926
   in liquid-sulfuric-acid
+  in geode-cyan
   out crystal-slurry
 recipe geode-yellow-liquify
   entity liquifier-4
   entity_speed 3.75
   time 3
-  amount 0.08670284
-  in geode-yellow
+  amount 0.05707321
   in liquid-sulfuric-acid
+  in geode-yellow
   out crystal-slurry
 recipe geode-purple-liquify
   entity liquifier-4
   entity_speed 3.75
   time 3
-  amount 0.065027125
+  amount 0.042804908
   in geode-purple
   in liquid-sulfuric-acid
   out crystal-slurry
@@ -249,7 +247,7 @@ recipe geode-red-liquify
   entity liquifier-4
   entity_speed 3.75
   time 3
-  amount 0.13005425
+  amount 0.085609816
   in geode-red
   in liquid-sulfuric-acid
   out crystal-slurry
@@ -257,7 +255,7 @@ recipe geode-blue-liquify
   entity liquifier-4
   entity_speed 3.75
   time 3
-  amount 0.13005425
+  amount 0.085609816
   in geode-blue
   in liquid-sulfuric-acid
   out crystal-slurry
@@ -265,109 +263,109 @@ recipe solid-geodes
   entity washing-plant-2
   entity_speed 2.25
   time 5
-  amount 0.43351418
+  amount 0.28536606
   in water
   in water-heavy-mud
-  out geode-purple
+  out geode-red
   out geode-cyan
   out geode-lightgreen
-  out geode-red
   out geode-yellow
   out geode-blue
+  out geode-purple
 recipe beacon-3
   entity assembling-machine-5
   entity_speed 2.75
   time 45
   amount 0.02
-  in advanced-processing-unit
-  in insulated-cable
-  in advanced-circuit
-  in gold-plate
   in titanium-plate
+  in gold-plate
+  in advanced-circuit
   in processing-unit
+  in advanced-processing-unit
   in beacon-2
   in crystal-full-harmonic
+  in insulated-cable
   out beacon-3
 recipe beacon-2
   entity assembling-machine-5
   entity_speed 2.75
   time 30
   amount 0.02
-  in tinned-copper-cable
-  in electronic-circuit
-  in beacon
   in crystal-shard-harmonic
+  in beacon
+  in processing-unit
   in aluminium-plate
   in advanced-circuit
-  in processing-unit
+  in electronic-circuit
+  in tinned-copper-cable
   out beacon-2
 recipe beacon
   entity assembling-machine-5
   entity_speed 2.75
   time 15
   amount 0.02
-  in crystal-splinter-harmonic
-  in steel-plate
-  in copper-cable
   in advanced-circuit
+  in crystal-splinter-harmonic
+  in copper-cable
   in electronic-circuit
+  in steel-plate
   out beacon
 recipe productivity-module-8
   entity assembling-machine-5
   entity_speed 2.75
   time 60
   amount 0.02
-  in advanced-processing-unit
-  in diamond-5
-  in productivity-module-7
-  in electronic-circuit
   in advanced-circuit
+  in diamond-5
   in processing-unit
+  in productivity-module-7
+  in advanced-processing-unit
+  in electronic-circuit
   out productivity-module-8
 recipe productivity-module-7
   entity assembling-machine-5
   entity_speed 2.75
   time 30
   amount 0.04
+  in electronic-components
+  in intergrated-electronics
+  in productivity-module-6
+  in processing-electronics
   in solder
   in module-contact
-  in processing-electronics
-  in intergrated-electronics
-  in electronic-components
-  in productivity-module-6
   out productivity-module-7
 recipe productivity-module-6
   entity assembling-machine-5
   entity_speed 2.75
   time 60
   amount 0.04
-  in advanced-processing-unit
-  in productivity-module-5
   in productivity-processor-3
   in ruby-5
   in processing-unit
+  in advanced-processing-unit
+  in productivity-module-5
   out productivity-module-6
 recipe productivity-module-5
   entity assembling-machine-5
   entity_speed 2.75
   time 30
   amount 0.16
-  in solder
-  in module-contact
-  in intergrated-electronics
-  in electronic-components
   in productivity-module-4
+  in electronic-components
+  in intergrated-electronics
+  in module-contact
+  in solder
   out productivity-module-5
 recipe speed-module-8
   entity assembling-machine-5
   entity_speed 2.75
   time 60
   amount 0.02
-  in advanced-processing-unit
-  in speed-module-7
-  in electronic-circuit
   in amethyst-5
   in advanced-circuit
+  in electronic-circuit
+  in speed-module-7
+  in advanced-processing-unit
   in processing-unit
   out speed-module-8
 recipe speed-module-7
@@ -375,12 +373,12 @@ recipe speed-module-7
   entity_speed 2.75
   time 30
   amount 0.04
+  in electronic-components
+  in intergrated-electronics
+  in speed-module-6
+  in processing-electronics
   in solder
   in module-contact
-  in processing-electronics
-  in intergrated-electronics
-  in electronic-components
-  in speed-module-6
   out speed-module-7
 recipe speed-module-6
   entity assembling-machine-5
@@ -388,72 +386,72 @@ recipe speed-module-6
   time 60
   amount 0.04
   in sapphire-5
-  in speed-processor-3
   in speed-module-5
-  in advanced-processing-unit
   in processing-unit
+  in advanced-processing-unit
+  in speed-processor-3
   out speed-module-6
 recipe speed-module-5
   entity assembling-machine-5
   entity_speed 2.75
   time 30
   amount 0.16
-  in module-contact
   in speed-module-4
-  in intergrated-electronics
   in electronic-components
+  in intergrated-electronics
   in solder
+  in module-contact
   out speed-module-5
 recipe productivity-module-4
   entity assembling-machine-5
   entity_speed 2.75
   time 30
   amount 0.16
-  in productivity-processor-2
-  in productivity-module-3
   in advanced-circuit
+  in productivity-module-3
   in processing-unit
+  in productivity-processor-2
   out productivity-module-4
 recipe productivity-module-3
   entity assembling-machine-5
   entity_speed 2.75
   time 15
   amount 0.64
+  in productivity-module-2
+  in electronic-components
   in module-contact
   in solder
-  in electronic-components
-  in productivity-module-2
   out productivity-module-3
 recipe speed-module-4
   entity assembling-machine-5
   entity_speed 2.75
   time 30
   amount 0.16
-  in speed-processor-2
-  in speed-module-3
   in advanced-circuit
+  in speed-module-3
   in processing-unit
+  in speed-processor-2
   out speed-module-4
 recipe speed-module-3
   entity assembling-machine-5
   entity_speed 2.75
   time 15
   amount 0.64
+  in speed-module-2
+  in electronic-components
   in module-contact
   in solder
-  in electronic-components
-  in speed-module-2
   out speed-module-3
 recipe productivity-module-2
   entity assembling-machine-5
   entity_speed 2.75
   time 15
   amount 0.64
-  in productivity-processor
-  in module-circuit-board
-  in productivity-module
   in advanced-circuit
+  in module-circuit-board
+  in productivity-processor
   in module-case
+  in productivity-module
   out productivity-module-2
 recipe speed-module-2
   entity assembling-machine-5
@@ -461,9 +459,9 @@ recipe speed-module-2
   time 15
   amount 0.64
   in speed-module
-  in speed-processor
-  in module-circuit-board
   in advanced-circuit
+  in module-circuit-board
+  in speed-processor
   in module-case
   out speed-module-2
 recipe productivity-module
@@ -471,32 +469,32 @@ recipe productivity-module
   entity_speed 2.75
   time 7.5
   amount 2.56
-  in module-contact
-  in solder
   in electronic-circuit
   in insulated-cable
+  in module-contact
+  in solder
   out productivity-module
 recipe speed-module
   entity assembling-machine-5
   entity_speed 2.75
   time 7.5
   amount 2.56
-  in module-contact
-  in solder
   in electronic-circuit
   in insulated-cable
+  in module-contact
+  in solder
   out speed-module
 recipe effectivity-module-8
   entity assembling-machine-5
   entity_speed 2.75
   time 60
   amount 0.01
+  in advanced-circuit
+  in processing-unit
+  in electronic-circuit
+  in effectivity-module-7
   in advanced-processing-unit
   in topaz-5
-  in effectivity-module-7
-  in advanced-circuit
-  in electronic-circuit
-  in processing-unit
   out effectivity-module-8
 recipe effectivity-module-7
   entity assembling-machine-5
@@ -504,52 +502,52 @@ recipe effectivity-module-7
   time 30
   amount 0.02
   in effectivity-module-6
-  in solder
-  in module-contact
-  in intergrated-electronics
   in electronic-components
   in processing-electronics
+  in intergrated-electronics
+  in solder
+  in module-contact
   out effectivity-module-7
 recipe effectivity-module-6
   entity assembling-machine-5
   entity_speed 2.75
   time 60
   amount 0.02
-  in advanced-processing-unit
   in effectivity-processor-3
-  in effectivity-module-5
   in emerald-5
   in processing-unit
+  in advanced-processing-unit
+  in effectivity-module-5
   out effectivity-module-6
 recipe effectivity-processor-3
   entity electronics-machine-3
   entity_speed 4
   time 7.5
   amount 0.39999998
-  in processing-electronics
   in module-processor-board-3
+  in crystal-full-green
   in intergrated-electronics
   in solder
-  in crystal-full-green
+  in processing-electronics
   out effectivity-processor-3
 recipe effectivity-module-5
   entity assembling-machine-5
   entity_speed 2.75
   time 30
   amount 0.08
-  in solder
-  in module-contact
-  in intergrated-electronics
   in electronic-components
   in effectivity-module-4
+  in intergrated-electronics
+  in module-contact
+  in solder
   out effectivity-module-5
 recipe effectivity-module-4
   entity assembling-machine-5
   entity_speed 2.75
   time 30
   amount 0.08
-  in effectivity-processor-2
   in effectivity-module-3
+  in effectivity-processor-2
   in advanced-circuit
   in processing-unit
   out effectivity-module-4
@@ -558,21 +556,21 @@ recipe effectivity-processor-2
   entity_speed 4
   time 5
   amount 0.39999998
-  in solder
   in module-processor-board-2
-  in intergrated-electronics
-  in electronic-components
   in crystal-shard-green
+  in intergrated-electronics
+  in solder
+  in electronic-components
   out effectivity-processor-2
 recipe effectivity-module-3
   entity assembling-machine-5
   entity_speed 2.75
   time 15
   amount 0.32
+  in effectivity-module-2
+  in electronic-components
   in module-contact
   in solder
-  in electronic-components
-  in effectivity-module-2
   out effectivity-module-3
 recipe effectivity-module-2
   entity assembling-machine-5
@@ -580,9 +578,9 @@ recipe effectivity-module-2
   time 15
   amount 0.32
   in effectivity-module
+  in advanced-circuit
   in module-circuit-board
   in effectivity-processor
-  in advanced-circuit
   in module-case
   out effectivity-module-2
 recipe effectivity-module
@@ -590,10 +588,10 @@ recipe effectivity-module
   entity_speed 2.75
   time 7.5
   amount 1.28
-  in module-contact
-  in solder
   in electronic-circuit
   in insulated-cable
+  in module-contact
+  in solder
   out effectivity-module
 recipe bob-diamond-5
   entity assembling-machine-5
@@ -617,10 +615,18 @@ recipe bob-diamond-4
   entity_speed 2.75
   time 3.5
   amount 0.0125
-  in diamond-3
-  in grinding-wheel
   in water
+  in grinding-wheel
+  in diamond-3
   out diamond-4
+recipe polishing-compound
+  entity angels-chemical-plant-3
+  entity_speed 2.75
+  time 2
+  amount 0.055147056
+  in alumina
+  in liquid-mineral-oil
+  out polishing-compound
 recipe bob-diamond-3
   entity assembling-machine-5
   entity_speed 2.75
@@ -650,8 +656,8 @@ recipe bob-ruby-4
   entity_speed 2.75
   time 3.5
   amount 0.025
-  in grinding-wheel
   in water
+  in grinding-wheel
   in ruby-3
   out ruby-4
 recipe module-contact
@@ -659,39 +665,39 @@ recipe module-contact
   entity_speed 2.75
   time 5
   amount 1.0625
-  in gold-plate
   in copper-plate
+  in gold-plate
   out module-contact
 recipe speed-processor-3
   entity electronics-machine-3
   entity_speed 4
   time 7.5
   amount 0.46511626
-  in processing-electronics
-  in module-processor-board-3
   in crystal-full-blue
+  in module-processor-board-3
   in intergrated-electronics
   in solder
+  in processing-electronics
   out speed-processor-3
 recipe productivity-processor-3
   entity electronics-machine-3
   entity_speed 4
   time 7.5
   amount 0.46511626
+  in crystal-full-red
   in processing-electronics
-  in module-processor-board-3
   in intergrated-electronics
   in solder
-  in crystal-full-red
+  in module-processor-board-3
   out productivity-processor-3
 recipe module-processor-board-3
   entity electronics-machine-3
   entity_speed 4
   time 30
   amount 0.19334775
+  in liquid-ferric-chloride-solution
   in gold-plate
   in copper-plate
-  in liquid-ferric-chloride-solution
   in fibreglass-board
   out module-processor-board-3
 recipe angels-glass-fiber-board
@@ -699,18 +705,18 @@ recipe angels-glass-fiber-board
   entity_speed 2.75
   time 1
   amount 0.096673876
-  in liquid-resin
   in angels-coil-glass-fiber
+  in liquid-resin
   out fibreglass-board
 recipe productivity-processor-2
   entity electronics-machine-3
   entity_speed 4
   time 5
   amount 0.46511626
-  in solder
   in module-processor-board-2
-  in intergrated-electronics
   in electronic-components
+  in intergrated-electronics
+  in solder
   in crystal-shard-red
   out productivity-processor-2
 recipe speed-processor-2
@@ -718,20 +724,20 @@ recipe speed-processor-2
   entity_speed 4
   time 5
   amount 0.46511626
-  in solder
   in module-processor-board-2
-  in crystal-shard-blue
-  in intergrated-electronics
   in electronic-components
+  in intergrated-electronics
+  in solder
+  in crystal-shard-blue
   out speed-processor-2
 recipe module-processor-board-2
   entity electronics-machine-3
   entity_speed 4
   time 20
   amount 0.19334775
+  in liquid-ferric-chloride-solution
   in gold-plate
   in copper-plate
-  in liquid-ferric-chloride-solution
   in fibreglass-board
   out module-processor-board-2
 recipe productivity-processor
@@ -739,42 +745,31 @@ recipe productivity-processor
   entity_speed 4
   time 2.5
   amount 1.860465
-  in solder
   in basic-electronic-components
-  in module-processor-board
   in electronic-components
   in crystal-splinter-red
+  in solder
+  in module-processor-board
   out productivity-processor
 recipe speed-processor
   entity electronics-machine-3
   entity_speed 4
   time 2.5
   amount 1.860465
-  in module-processor-board
+  in basic-electronic-components
+  in electronic-components
   in solder
   in crystal-splinter-blue
-  in electronic-components
-  in basic-electronic-components
-  out speed-processor
-recipe effectivity-processor
-  entity electronics-machine-3
-  entity_speed 4
-  time 2.5
-  amount 1.5999999
   in module-processor-board
-  in solder
-  in electronic-components
-  in crystal-splinter-green
-  in basic-electronic-components
-  out effectivity-processor
+  out speed-processor
 recipe module-processor-board
   entity electronics-machine-3
   entity_speed 4
   time 10
-  amount 0.773391
+  amount 0.5408329
+  in tin-plate
   in liquid-ferric-chloride-solution
   in copper-plate
-  in tin-plate
   in phenolic-board
   out module-processor-board
 recipe module-case
@@ -790,24 +785,24 @@ recipe module-circuit-board
   entity_speed 4
   time 10
   amount 0.9302325
+  in tin-plate
   in liquid-ferric-chloride-solution
   in copper-plate
-  in tin-plate
   in phenolic-board
   out module-circuit-board
 recipe phenolic-board
   entity electronics-machine-3
   entity_speed 4
   time 0.5
-  amount 0.49523938
-  in wooden-board
+  amount 0.42763528
   in resin
+  in wooden-board
   out phenolic-board
 recipe wooden-board
   entity electronics-machine-1
   entity_speed 1
   time 0.5
-  amount 0.49523938
+  amount 0.42763528
   in wood
   out wooden-board
 recipe bob-ruby-3
@@ -839,9 +834,9 @@ recipe bob-amethyst-4
   entity_speed 2.75
   time 3.5
   amount 0.0125
-  in amethyst-3
-  in grinding-wheel
   in water
+  in grinding-wheel
+  in amethyst-3
   out amethyst-4
 recipe bob-amethyst-3
   entity assembling-machine-5
@@ -872,8 +867,8 @@ recipe bob-sapphire-4
   entity_speed 2.75
   time 3.5
   amount 0.025
-  in grinding-wheel
   in water
+  in grinding-wheel
   in sapphire-3
   out sapphire-4
 recipe bob-sapphire-3
@@ -897,17 +892,17 @@ recipe bob-emerald-5
   time 17.5
   amount 0.02
   in emerald-4
-  in polishing-wheel
   in polishing-compound
+  in polishing-wheel
   out emerald-5
 recipe bob-emerald-4
   entity assembling-machine-5
   entity_speed 2.75
   time 3.5
   amount 0.0125
+  in emerald-3
   in grinding-wheel
   in water
-  in emerald-3
   out emerald-4
 recipe bob-emerald-3
   entity assembling-machine-5
@@ -938,9 +933,9 @@ recipe bob-topaz-4
   entity_speed 2.75
   time 3.5
   amount 0.00625
+  in topaz-3
   in grinding-wheel
   in water
-  in topaz-3
   out topaz-4
 recipe bob-topaz-3
   entity assembling-machine-5
@@ -957,13 +952,6 @@ recipe angelsore7-crystallization-2
   in crystal-seedling
   in catalysator-green
   out topaz-ore
-recipe catalysator-green
-  entity crystallizer-2
-  entity_speed 2.25
-  time 0.5
-  amount 0.023626514
-  in crystal-seedling
-  out catalysator-green
 recipe wood-pellets
   entity assembling-machine-5
   entity_speed 2.75
@@ -982,14 +970,14 @@ recipe copper-cable
   entity electronics-machine-3
   entity_speed 4
   time 0.5
-  amount 13.372742
+  amount 12.628555
   in copper-plate
   out copper-cable
 recipe basic-tinned-copper-wire
   entity electronics-machine-3
   entity_speed 4
   time 0.5
-  amount 2.4996538
+  amount 2.3508165
   in tin-plate
   in copper-cable
   out tinned-copper-cable
@@ -1005,24 +993,24 @@ recipe basic-electronic-components
   entity electronics-machine-3
   entity_speed 4
   time 4
-  amount 0.6187128
-  in solid-carbon
+  amount 0.43266627
   in tinned-copper-cable
+  in solid-carbon
   out basic-electronic-components
 recipe electronic-components
   entity electronics-machine-3
   entity_speed 4
   time 3.5
-  amount 2.639805
-  in plastic-bar
+  amount 2.267712
   in tinned-copper-cable
+  in plastic-bar
   in silicon-wafer
   out electronic-components
 recipe silicon-wafer
   entity assembling-machine-5
   entity_speed 2.75
   time 1
-  amount 1.1515232
+  amount 1.0740038
   in angels-mono-silicon
   out silicon-wafer
 recipe intergrated-electronics
@@ -1030,16 +1018,16 @@ recipe intergrated-electronics
   entity_speed 4
   time 5
   amount 0.8628988
-  in plastic-bar
-  in tinned-copper-cable
-  in silicon-wafer
   in liquid-sulfuric-acid
+  in tinned-copper-cable
+  in plastic-bar
+  in silicon-wafer
   out intergrated-electronics
 recipe solid-resin
   entity assembling-machine-5
   entity_speed 2.75
   time 2
-  amount 1.8952489
+  amount 0.10690882
   in liquid-resin
   out resin
 recipe processing-electronics
@@ -1047,10 +1035,10 @@ recipe processing-electronics
   entity_speed 4
   time 7
   amount 0.38723633
-  in silicon-wafer
   in liquid-sulfuric-acid
-  in gilded-copper-cable
   in silicon-nitride
+  in silicon-wafer
+  in gilded-copper-cable
   out processing-electronics
 recipe silicon-nitride
   entity angels-chemical-furnace-3
@@ -1060,11 +1048,18 @@ recipe silicon-nitride
   in silicon-powder
   in gas-nitrogen
   out silicon-nitride
+recipe solid-rubber
+  entity assembling-machine-5
+  entity_speed 2.75
+  time 2
+  amount 0.9447674
+  in liquid-rubber
+  out rubber
 recipe milling-drum-used
   entity assembling-machine-5
   entity_speed 2.75
   time 1
-  amount 0.07813952
+  amount 0.3981395
   in milling-drum-used
   in lubricant
   out milling-drum
@@ -1076,44 +1071,41 @@ recipe angels-wire-gold
   in gold-plate
   in copper-cable
   out gilded-copper-cable
-recipe bob-rubber
-  entity electric-furnace-2
-  entity_speed 3
-  time 3.5
-  amount 2.3619187
-  in resin
-  out rubber
 recipe total
   in solder
   in copper-plate
-  in tin-plate
   in advanced-circuit
+  in tin-plate
   in electronic-circuit
-  in plastic-bar
   in aluminium-plate
+  in plastic-bar
+  in processing-unit
   in solid-carbon
   in silicon-powder
-  in processing-unit
   in gold-plate
   in crystal-splinter-raw
+  in effectivity-processor
   in steel-plate
-  in liquid-resin
   in wood
   in angels-mono-silicon
   in advanced-processing-unit
-  in crystal-full-raw
+  in liquid-rubber
   in crystal-shard-raw
+  in crystal-full-raw
   in water-heavy-mud
   in liquid-sulfuric-acid
-  in water
   in liquid-ferric-chloride-solution
   in titanium-plate
-  in polishing-compound
+  in liquid-resin
+  in water
   in angels-coil-glass-fiber
   in gas-nitrogen
-  in crystal-seedling
   in lubricant
   in water-purified
+  in alumina
+  in crystal-seedling
+  in catalysator-green
+  in liquid-mineral-oil
   out beacon-3
   out productivity-module-8
   out speed-module-8

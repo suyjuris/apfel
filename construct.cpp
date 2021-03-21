@@ -30,12 +30,14 @@ enum Constraints_construct: u64 {
     use_all_recipes,
     partition_field,
     partition_border,
+    partition_border_nooutput,
 };
 
 enum Params_construct: u64 {
     PARAM_CONSTRUCT_BEGIN = PARAM_CONSTRUCT,
     param_recipes, param_nx, param_ny, param_n_items,
-    param_n_transport_max, param_n_partition_max,
+    param_n_transport_max, param_n_border_max, param_n_partition_max,
+    param_n_sparsecut_maxsize,
     PARAM_CONSTRUCT_END
 };
 
@@ -468,6 +470,7 @@ void construct_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
     case partition_field: {
         assert(args.size == 2);
         s64 n_transport_max = hashmap_get(&inst->params, param_n_transport_max);
+        s64 n_border_max    = hashmap_get(&inst->params, param_n_border_max);
         s64 n_partition_max = hashmap_get(&inst->params, param_n_partition_max);
         Field f {(s64)args[0], (s64)args[1]};
 
@@ -504,6 +507,7 @@ void construct_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
         for (u8 d = Field_var::BEG; d < Field_var::END; ++d) {
             Field f2 = f.move(d);
             if (f2.inbounds(nx, ny) and (d == Field_var::LEFT or d == Field_var::BOTTOM)) continue;
+            s64 limit = n_transport_max;
 
             // Transport only a limited number of items between fields
             s64 index = inst->rewrite_temp.size;
@@ -512,7 +516,7 @@ void construct_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
                 array_push_back(&inst->rewrite_temp, f2.out(i, Field_var::dir_back(d)));
             }
             u64 group_transport = sat_group(inst, array_subarray(inst->rewrite_temp, index));
-            sat_add(inst, at_most_k, {group_transport, (u64)n_transport_max});
+            sat_add(inst, at_most_k, {group_transport, (u64)limit});
 
             // An item cannot be transported into both directions @Redundant
             for (s64 i = 0; i < n_items; ++i) {
@@ -527,6 +531,7 @@ void construct_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
     case partition_border: {
         assert(args.size == 0);
         s64 n_transport_max = hashmap_get(&inst->params, param_n_transport_max);
+        s64 n_border_max    = hashmap_get(&inst->params, param_n_border_max);
         s64 n_partition_max = hashmap_get(&inst->params, param_n_partition_max);
         Field f = Field::border();
         Recipe rg = rdb->get(rdb->recipe_count);
@@ -538,6 +543,39 @@ void construct_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
             if (not bitset_get(rg.mask_input, i)) {
                 // If the item is not an input of the global recipe, output it only if it is an input of the field
                 sat_push_add_pop(inst, {~f.inp(i)}, logical_and, {~f.out(i, Field_var::DIR_ALL)});
+            }
+
+            // If it is an output of the global recipe, we must have it
+            if (bitset_get(rg.mask_output, i)) {
+                sat_add(inst, clause, {f.inp(i)});
+            }
+        }
+
+        // Only have a limited number of items which are not involved in the global recipe as inputs of the border
+        s64 index = inst->rewrite_temp.size;
+        for (s64 i = 0; i < n_items; ++i) {
+            if (not bitset_get(rg.mask_input, i) and not bitset_get(rg.mask_output, i)) {
+                array_push_back(&inst->rewrite_temp, f.inp(i));
+            }
+        }
+        auto arr = array_subarray(inst->rewrite_temp, index);
+        sat_add(inst, at_most_k, {sat_group(inst, arr), (u64)n_border_max});
+    } break;
+
+    case partition_border_nooutput: {
+        assert(args.size == 0);
+        s64 n_transport_max = hashmap_get(&inst->params, param_n_transport_max);
+        s64 n_partition_max = hashmap_get(&inst->params, param_n_partition_max);
+        Field f = Field::border();
+        Recipe rg = rdb->get(rdb->recipe_count);
+        
+        for (s64 i = 0; i < n_items; ++i) {
+            // Having an item as input means that an adjacent tile gave it to us
+            sat_add(inst, implies, {f.inp(i), f.adjout(i)});
+
+            if (not bitset_get(rg.mask_input, i)) {
+                // If the item is not an input of the global recipe, do not output it
+                sat_add(inst, logical_and, {~f.out(i, Field_var::DIR_ALL)});
             }
 
             // If it is an output of the global recipe, we must have it
@@ -621,7 +659,8 @@ bool construct_explain(Sat_instance* inst, u64 id, Array_t<u64> args, Array_dyn<
 
 struct Construct_params {
     s64 nx, ny, n_items;
-    s64 n_transport_max, n_partition_max;
+    s64 n_transport_max, n_border_max, n_partition_max;
+    s64 n_sparsecut_maxsize;
     s64 partition_nx, partition_ny;
     Recipe_db rdb;
 
@@ -735,8 +774,13 @@ void construct_params_parse(Construct_params* cpar, Array_t<u8> data) {
             
         } else if (array_equal_str(word, "transport_max")) {
             cpar->n_transport_max = _parse_number(rest);
+        } else if (array_equal_str(word, "border_max")) {
+            cpar->n_border_max = _parse_number(rest);
         } else if (array_equal_str(word, "partition_max")) {
             cpar->n_partition_max = _parse_number(rest);
+
+        } else if (array_equal_str(word, "sparsecut_maxsize")) {
+            cpar->n_sparsecut_maxsize = _parse_number(rest);
             
         } else if (array_equal_str(word, "recipe")) {
             assert(not has_total_recipe);
@@ -816,7 +860,7 @@ void construct_params_parse(Construct_params* cpar, Array_t<u8> data) {
         fputc('\n', f);
     }
     fputs("Recipes:\n", f);
-    for (s64 i = 0; i < cpar->rdb.recipe_count; ++i) {
+    for (s64 i = 0; i <= cpar->rdb.recipe_count; ++i) {
         fputs("  ", f);
         fprintf(f, "%3lld ", i);
         _digit(i, f);
@@ -869,6 +913,7 @@ void construct_partition_instance(Construct_params* params, Sat_instance* inst) 
     hashmap_set(&inst->params, param_ny, params->partition_ny);
     hashmap_set(&inst->params, param_n_items, params->n_items);
     hashmap_set(&inst->params, param_n_transport_max, params->n_transport_max);
+    hashmap_set(&inst->params, param_n_border_max,    params->n_border_max);
     hashmap_set(&inst->params, param_n_partition_max, params->n_partition_max);
     
     hashmap_set(&inst->params, param_recipes, (s64)&params->rdb);
@@ -944,9 +989,9 @@ void construct_refine_instance(Construct_params* params, Sat_instance* inst, Sat
     }
 
 
-    s64 size = inst->rewrite_temp.size;
-    defer { inst->rewrite_temp.size = size; };
-
+    //s64 size = inst->rewrite_temp.size;
+    //defer { inst->rewrite_temp.size = size; };
+    //
     //for (s64 item = 0; item < params->n_items; ++item) {
     //    for (u64 lit: sat_expand(inst, Field::border().out(item+params->n_items, Field_var::DIR_ALL), &inst->rewrite_temp)) {
     //        Field_var v = construct_decompose(lit);
@@ -954,7 +999,7 @@ void construct_refine_instance(Construct_params* params, Sat_instance* inst, Sat
     //        vp.x /= psize_x; vp.y /= psize_y;
     //        vp.el -= params->n_items;
     //
-    //        // If the item is not output by the border here, we do not output it either
+    //        // If the item is not output by the border here, we do not output it (the tainted version) either
     //        if (not (*sol)[construct_compose(vp)]) sat_add(inst, Sat::clause, {~lit});
     //    }
     //
@@ -1718,6 +1763,342 @@ void construct_make_blueprint(Construct_params* cpar, Sat_instance* inst, Sat_so
     fputs("]}}\n", f);
 }
 
+void construct_partition_make_blueprint(Construct_params* cpar, Sat_instance* inst, Sat_solution* ssol) {
+    Sat_solution& sol = *ssol;
+
+    FILE* f = fopen("blueprint.out", "w");
+    fputs("{\"blueprint\":{\"item\": \"blueprint\",\"version\": 281479273316352,\"entities\": [\n", f);
+
+    s64 w = 4;
+    s64 h = (cpar->n_partition_max + 3) / 4;
+    
+    s64 entity_count = 0;
+    for (s64 y = 0; y < cpar->partition_ny; ++y) {
+        for (s64 x = 0; x < cpar->partition_nx; ++x) {
+            Field fi {x, y};
+            s64 ox = 0, oy = 0;
+            
+            for (s64 r = 0; r < cpar->rdb.recipe_count; ++r) {
+                if (not sol[fi.rec(r)]) continue;
+
+                s64 oox = 5*((w+1)*x + ox);
+                s64 ooy = 5*((h+1)*y + oy);
+                
+                Recipe rec = cpar->rdb.get(r);
+                Array_t<u8> name = construct_string_load(cpar, rec.name);
+                Array_t<u8> entity = construct_string_load(cpar, rec.entity);
+                if (entity_count) fputs(",", f);
+                fputs("{\"name\":\"", f);
+                fwrite(entity.data, 1, entity.size, f);
+                fputs("\",\"recipe\":\"", f);
+                fwrite(name.data, 1, name.size, f);
+                fprintf(f, "\",\"position\":{\"x\":%lld,\"y\":%lld},\"entity_number\":%lld", oox, ooy, entity_count+1);
+                fputs("}\n", f);
+                ++entity_count;
+
+                ++ox;
+                if (ox == w) { ++oy; ox = 0; }
+            }
+        }
+    }
+    
+    fputs("]}}\n", f);
+}
+
+void construct_sparsestcut_instance(Construct_params* cpar, Sat_instance* inst, float fac, Array_t<u64> mask_recipes, s64 max_count = -1) {
+    using namespace Sat;
+    using namespace Construct;
+
+    hashmap_set(&inst->params, param_nx, 2);
+    hashmap_set(&inst->params, param_ny, 1);
+    hashmap_set(&inst->params, param_n_items, cpar->n_items);
+    hashmap_set(&inst->params, param_n_sparsecut_maxsize, cpar->n_sparsecut_maxsize);
+    hashmap_set(&inst->params, param_recipes, (s64)&cpar->rdb);
+    
+    sat_register_expand_func(inst, GROUP_CONSTRUCT, &construct_expand);
+    sat_register_rewrite_func(inst, CONSTRAINT_CONSTRUCT, &construct_rewrite);
+    for (u64 i: {VAR_CONSTRUCT, GROUP_CONSTRUCT, CONSTRAINT_CONSTRUCT}) {
+        sat_register_explain_func(inst, i, &construct_explain);
+    }
+
+    
+    auto* rdb = &cpar->rdb;
+    s64 n_sparsecut_maxsize = cpar->n_sparsecut_maxsize;
+
+    for (s64 x = 0; x < 2; ++x) {
+        Field f {x, 0};
+    
+        for (s64 i = 0; i < cpar->n_items; ++i) {
+            // If an item is output, there must be a recipe actually outputting it
+            {s64 index = inst->rewrite_temp.size;
+            for (s64 r_it = 0; r_it < rdb->recipe_count; ++r_it) {
+                if (not bitset_get(mask_recipes, r_it)) continue;
+                
+                if (bitset_get(rdb->get(r_it).mask_output, i)) {
+                    array_push_back(&inst->rewrite_temp, f.rec(r_it));
+                }
+            }
+            auto arr = array_subarray(inst->rewrite_temp, index);
+            sat_addg(inst, implies, {f.out(i, Field_var::UNDIRECTED)}, arr);}
+            
+            // If we have a recipe, the inputs of the recipe must be inputs or outputs of the field
+            for (s64 r_it = 0; r_it < rdb->recipe_count; ++r_it) {
+                if (not bitset_get(mask_recipes, r_it)) continue;
+                
+                if (bitset_get(rdb->get(r_it).mask_input, i)) {
+                    sat_addg(inst, implies, {f.rec(r_it)}, {f.inp(i), f.out(i, Field_var::UNDIRECTED)});
+                }
+            }
+
+            // Disable unused recipes (only for debug output)
+            for (s64 r_it = 0; r_it < rdb->recipe_count; ++r_it) {
+                if (not bitset_get(mask_recipes, r_it)) {
+                    sat_add(inst, clause, {~f.rec(r_it)});
+                }
+            }
+        }
+    }
+
+    Field f1 {0, 0};
+    Field f2 {1, 0};
+    Recipe rg = rdb->get(rdb->recipe_count);
+
+    // Recipes either on the left or the right
+    for (s64 r_it = 0; r_it < rdb->recipe_count; ++r_it) {
+        if (not bitset_get(mask_recipes, r_it)) continue;
+        sat_add(inst, equivalent, {f1.rec(r_it), ~f2.rec(r_it)});
+    }
+
+    
+    for (s64 i = 0; i < cpar->n_items; ++i) {
+        if (not bitset_get(rg.mask_input, i)) {
+            // The field on the right receives outputs from the left
+            sat_add(inst, implies, {f2.inp(i), f1.out(i, Field_var::UNDIRECTED)});
+            
+            // The field on the left may only take global inputs as input
+            sat_add(inst, clause, {~f1.inp(i)});
+        }
+
+        // Global items must be output
+        if (bitset_get(rg.mask_output, i)) {
+            sat_add(inst, clause, {f1.out(i, Field_var::UNDIRECTED), f2.out(i, Field_var::UNDIRECTED)});
+        }
+
+    }
+    
+    
+    // At least one recipe
+    {s64 index = inst->rewrite_temp.size;
+    for (s64 r_it = 0; r_it < rdb->recipe_count; ++r_it) {
+        if (not bitset_get(mask_recipes, r_it)) continue;
+        array_push_back(&inst->rewrite_temp, f1.rec(r_it));
+    }
+    auto arr = array_subarray(inst->rewrite_temp, index);
+    sat_add(inst, clause, arr);}
+    
+    if (fac >= 0) {
+        // Sparsity
+        s64 index = inst->rewrite_temp.size;
+        for (s64 i = 0; i < cpar->n_items; ++i) {
+            array_push_back(&inst->rewrite_temp, f1.inp(i));
+        
+            if (bitset_get(rg.mask_output, i)) {
+                array_push_back(&inst->rewrite_temp, f1.out(i, Field_var::UNDIRECTED));
+            }
+            if (not bitset_get(rg.mask_input, i)) {
+                array_push_back(&inst->rewrite_temp, f2.inp(i));
+            }
+        }
+        auto arr_inp = array_subarray(inst->rewrite_temp, index);
+        index = inst->rewrite_temp.size;
+        for (s64 r_it = 0; r_it < rdb->recipe_count; ++r_it) {
+            if (not bitset_get(mask_recipes, r_it)) continue;
+            array_push_back(&inst->rewrite_temp, f1.rec(r_it));
+        }
+        auto arr_rec = array_subarray(inst->rewrite_temp, index);
+        s64 max_rec = arr_rec.size >= n_sparsecut_maxsize ? n_sparsecut_maxsize : arr_rec.size;
+        u64 group_rec = sat_temp_group_create(inst, max_rec);
+        u64 group_inp = sat_temp_group_create(inst, (s64)(max_rec * fac));
+        
+        sat_add(inst, merge_multi, {sat_group(inst, arr_inp), group_inp});
+        sat_add(inst, merge_multi, {sat_group(inst, arr_rec), group_rec});
+        
+        auto sort_inp = sat_expand(inst, group_inp, &inst->rewrite_temp);
+        auto sort_rec = sat_expand(inst, group_rec, &inst->rewrite_temp);
+        for (s64 i = 0; i < sort_rec.size; ++i) {
+            sat_add(inst, implies, {~sort_rec[i], ~sat_vget(sort_inp, (s64)(fac*i))});
+        }
+
+        // Count
+        if (max_count > 0) {
+            sat_add(inst, clause, {~sat_vget(sort_rec, max_count)});
+        }
+    }
+}
+
+void construct_sparsecut_solution_print(Construct_params* cpar, Sat_instance* inst, Sat_solution* sol) {
+    Field f {0, 0};
+    Field f2 {1, 0};
+
+    s64 n_inp = 0, n_rec = 0;
+    puts("Recipes:");
+    for (s64 r_it = 0; r_it < cpar->rdb.recipe_count; ++r_it) {
+        if (not (*sol)[f.rec(r_it)]) continue;
+        Recipe rec = cpar->rdb.get(r_it);
+        
+        Array_t<u8> name = construct_string_load(cpar, rec.name);
+        printf("    ");
+        fwrite(name.data, 1, name.size, stdout);
+        printf("\n");
+
+        ++n_rec;
+    }
+    puts("Inputs:");
+    for (s64 i = 0; i < cpar->n_items; ++i) {
+        if (not sol->istrue(f.inp(i))) continue;
+
+        Array_t<u8> name = construct_string_load(cpar, cpar->item_names[i]);
+        printf("    ");
+        fwrite(name.data, 1, name.size, stdout);
+        printf("\n");
+
+        ++n_inp;
+    }
+    puts("Outputs:");
+    Recipe rg = cpar->rdb.get(cpar->rdb.recipe_count);
+    for (s64 i = 0; i < cpar->n_items; ++i) {
+        if (not (*sol)[f.out(i, Field_var::UNDIRECTED)]) continue;
+
+        if (bitset_get(rg.mask_output, i) or (not bitset_get(rg.mask_input, i) and (*sol)[f2.inp(i)])) {
+            Array_t<u8> name = construct_string_load(cpar, cpar->item_names[i]);
+            printf("    ");
+            fwrite(name.data, 1, name.size, stdout);
+            printf("\n");
+
+            ++n_inp;
+        }
+    }
+
+    puts("");
+    printf("Inputs:  %lld / %lld\n", n_inp, cpar->n_items);
+    printf("Recipes: %lld / %lld\n", n_rec, cpar->rdb.recipe_count);
+    printf("Value:   %.2f\n", n_inp / (float)n_rec);
+}
+
+float construct_sparsecut_value(Construct_params* cpar, Sat_instance* inst, Sat_solution* sol, s64* out_count = nullptr) {
+    Field f {0, 0};
+    Field f2 {1, 0};
+    s64 n_inp = 0, n_rec = 0;
+    for (s64 r_it = 0; r_it < cpar->rdb.recipe_count; ++r_it) {
+        if (not (*sol)[f.rec(r_it)]) continue;
+        ++n_rec;
+    }
+    for (s64 i = 0; i < cpar->n_items; ++i) {
+        n_inp += sol->istrue(f.inp(i));
+    }
+    Recipe rg = cpar->rdb.get(cpar->rdb.recipe_count);
+    for (s64 i = 0; i < cpar->n_items; ++i) {
+        if (not (*sol)[f.out(i, Field_var::UNDIRECTED)]) continue;
+
+        if (bitset_get(rg.mask_output, i) or (not bitset_get(rg.mask_input, i) and (*sol)[f2.inp(i)])) {
+            ++n_inp;
+        }
+    }
+
+    if (out_count) *out_count = n_rec;
+    return n_inp / (float)n_rec;
+}
+
+void construct_sparsecut_minimal(Construct_params* cpar, Sat_instance* inst, Sat_solution* sol, Array_t<u64> mask_recipes) {
+    sat_init(inst);
+    sat_solution_init(sol);
+    construct_sparsestcut_instance(cpar, inst, -1.f, mask_recipes);
+    assert(sat_solver_run(inst, "kissat"_arr, sol));
+    
+    s64 last_count;
+    float lower = 0.f;
+    float upper = construct_sparsecut_value(cpar, inst, sol, &last_count);
+    printf("Bounds %.3f - %.3f\n", lower, upper);
+
+    bool is_sat = true;
+    float last_mid = -1.f;
+    for (s64 it = 0; it < 7; ++it) {
+        float mid = (lower + upper) / 2.f;
+        sat_init(inst);
+        sat_solution_init(sol);
+        construct_sparsestcut_instance(cpar, inst, mid, mask_recipes);
+        is_sat = sat_solver_run(inst, "kissat"_arr, sol);
+        if (is_sat) {
+            upper = construct_sparsecut_value(cpar, inst, sol, &last_count);
+            assert(upper <= mid);
+            last_mid = mid;
+        } else {
+            lower = mid;
+        }
+
+        printf("Bounds %.3f - %.3f\n", lower, upper);
+    }
+
+    while (last_count > 1) {
+        sat_init(inst);
+        sat_solution_init(sol);
+        construct_sparsestcut_instance(cpar, inst, last_mid, mask_recipes, last_count - 1);
+        
+        is_sat = sat_solver_run(inst, "kissat"_arr, sol);
+        if (is_sat) {
+            last_mid = construct_sparsecut_value(cpar, inst, sol, &last_count);
+        } else {
+            break;
+        }
+        
+    }
+    
+    sat_init(inst);
+    sat_solution_init(sol);
+    construct_sparsestcut_instance(cpar, inst, last_mid, mask_recipes, last_count);
+    assert(sat_solver_run(inst, "kissat"_arr, sol));
+}
+
+void construct_sparsecut_partition(Construct_params* cpar, Sat_instance* inst, Sat_solution* sol) {
+    s64 left = cpar->rdb.recipe_count;
+    Array_t<u64> mask_recipes = array_create<u64>((left + 63) / 64);
+    memset(mask_recipes.data, -1, mask_recipes.size * sizeof(mask_recipes.data[0]));
+
+    Field f1 {0, 0};
+    Recipe rg = cpar->rdb.get(cpar->rdb.recipe_count);
+
+    FILE* f = fopen("partition.out", "w");
+    
+    while (left > 0) {
+        construct_sparsecut_minimal(cpar, inst, sol, mask_recipes);
+        construct_sparsecut_solution_print(cpar, inst, sol);
+
+        for (s64 r_it = 0; r_it < cpar->rdb.recipe_count; ++r_it) {
+            if (not (*sol)[f1.rec(r_it)]) continue;
+            Recipe rec = cpar->rdb.get(r_it);
+            
+            Array_t<u8> name = construct_string_load(cpar, rec.name);
+            fwrite(name.data, 1, name.size, f);
+            fputc(' ', f);
+
+            
+            bitset_set(&mask_recipes, r_it, false);
+            for (s64 i = 0; i < cpar->n_items; ++i) {
+                if (bitset_get(rec.mask_output, i)) {
+                    bitset_set(&rg.mask_input, i, true);
+                    bitset_set(&rg.mask_output, i, false);
+                }
+            }
+            --left;
+        }
+        
+        fputc('\n', f);
+    }
+    
+    fclose(f);
+}
+
+
 int main(int argc, char** argv) {
     if (argc < 3) {
         fprintf(stderr, "Usage:\n  %s <mode> <file> [args...]\n", argv[0]);
@@ -1759,9 +2140,29 @@ int main(int argc, char** argv) {
 
         if (is_sat) {
             construct_solution_print(&params, &inst, &sol, false);
+            construct_partition_make_blueprint(&params, &inst, &sol);
         } else {
             fputs("\nInstance is not satisfiable. Sorry.\n", stdout);
         }
+        
+        return 0;
+    } else if (strcmp(argv[1], "sparsestcut") == 0) {
+        if (argc != 3) {
+            fprintf(stderr, "Usage:\n  %s %s <file>\n", argv[0], argv[1]);
+            return 1;
+        }
+
+        Sat_solution sol;
+        construct_sparsecut_partition(&params, &inst, &sol);
+        
+        //Sat_solution sol;
+        //bool is_sat = sat_solver_run(&inst, "kissat"_arr, &sol);
+        //
+        //if (is_sat) {
+        //    construct_sparsecut_solution_print(&params, &inst, &sol);
+        //} else {
+        //    fputs("\nInstance is not satisfiable. Sorry.\n", stdout);
+        //}
         
         return 0;
     } else if (strcmp(argv[1], "partition_and_refine") == 0) {

@@ -215,7 +215,7 @@ Array_t<u64> sat_expand_recursive(Sat_instance* inst, u64 lit, Array_dyn<u64>* o
 
 
 u64 sat_vget(Array_t<u64> vec, s64 i) {
-    return 0 <= i and i < vec.size ? vec[i] : (u64)Sat::var_false;
+    return 0 <= i and i < vec.size ? vec.data[i] : (u64)Sat::var_false;
 }
 
 Array_t<u64> sat_subrange(Sat_instance* inst, Array_t<u64> arr, s64 beg, s64 end, s64 step) {
@@ -367,7 +367,6 @@ void sat_rewrite_basic(Sat_instance* inst, u64 op, Array_t<u64> args) {
 
     case equivalent:
         assert(args.size == 2);
-        assert((args[0] & MASK_TYPE) == VAR and (args[1] & MASK_TYPE) == VAR);
         sat_add(inst, clause_noexpand, {~args[0],  args[1]});
         sat_add(inst, clause_noexpand, { args[0], ~args[1]});
         break;

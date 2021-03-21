@@ -3,7 +3,10 @@ items 44
 
 partition_size 2 2
 transport_max 4
+border_max 2
 partition_max 5
+
+sparsecut_maxsize 10
 
 recipe angelsore8-crystal
   entity crystallizer

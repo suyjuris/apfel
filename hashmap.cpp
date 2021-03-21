@@ -35,7 +35,7 @@ s64 _hashmap_slot_base(u64 map_slots_size, u64 key) {
 	x =  x ^ (x >> 31);
     return x & (map_slots_size-1);
 #else
-    return key; // no hashing for the fuzzer
+    return key & (map_slots_size-1); // no hashing for the fuzzer
 #endif
 }
 
@@ -259,6 +259,81 @@ u64 hash_arr(Array_t<u64> arr) {
     for (u64 a: arr) x = hash_u64(a ^ x);
     return x;
 }
+
+
+#if 0
+struct Hashmap_u32 {
+    struct Slot {
+        u64 hashes[2]; // slots: 0 -> 02468a, 1 -> 13579b
+        u32 values[12];
+    };
+    struct Slot_keys {
+        u64 keys[12];
+    };
+
+    Array_t<Slot> slots;
+    Array_t<Slot_keys> slot_keys;
+    s64 size = 0;
+};
+
+u64 _hashmap_slot_find(Hashmap_u32* map, u64 key) {
+#ifndef HASHMAP_TEST    
+    u64 hash = hash_u64(key);
+#else
+    u64 hash = key;
+#endif
+    
+    u64 subhash = hash & 0x3ff;
+    s64 map_slots_size = map->slots.size;
+    if (map_slots_size == 0) return -1;
+    s64 slot_it = (hash >> 10) ;
+    if (subhash == 0) subhash = hash >> 54;
+    subhash += not subhash;
+
+    for (;; ++slot_it) {
+        Slot* slot = &map->slots[slot_it & (map_slots_size-1)];
+
+        u64 subhash_bc = 0x4010040100401ull * subhash;
+        u64 slot_hashes_0 = slot->hashes[0];
+        u64 cmp0 = slot_hashes_0   ^ subhash_bc;
+        u64 cmp1 = slot->hashes[1] ^ subhash_bc;
+        cmp0 &= cmp0 >> 5;
+        cmp1 &= cmp1 >> 5;
+        cmp0 &= 0x7c1f07c1f07c1full;
+        cmp1 &= 0x7c1f07c1f07c1full;
+        cmp0 += 0x4010040100401ull;
+        cmp1 += 0x4010040100401ull;
+        cmp0 &= 0x80200802008020ull;
+        cmp1 &= 0x80200802008020ull;
+        u64 eq = cmp0 >> 1 | cmp1;
+        s64 count = __builtin_popcountll(eq);
+
+        // fast-path
+        if (count == 1) {
+            s64 index = __builtin_ctzll(eq) / 5;
+            if (map->slots_keys[slot_it].keys[index] == key) {
+                return slot_it << 4 | index;
+            } 
+        } else if (count > 1) {
+            for (s64 i = 0; i < count; ++i) {
+                s64 index = __builtin_ctzll(eq) / 5;
+                if (map->slots_keys[slot_it].keys[index] == key) {
+                    return slot_it << 4 | index;
+                }
+                eq >>= 5;
+            }
+        }
+
+        s64 filled = slot_hashes_0 >> 60;
+        if (filled < 12) {
+            return slot_it << 4 | filled | (1ull << 63);
+        }
+    }
+
+    assert(false);
+    return -1;
+}
+#endif
 
 #ifdef HASHMAP_TEST
 int main(int argc, char** argv) {
