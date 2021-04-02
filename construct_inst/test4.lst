@@ -5,6 +5,9 @@ partition_size 2 2
 transport_max 6
 partition_max 13
 
+sparsecut_maxsize 8
+sparsecut_groups 3
+
 recipe bob-roboport-4
   entity assembling-machine-6
   entity_speed 3.5
