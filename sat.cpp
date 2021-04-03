@@ -779,7 +779,7 @@ void sat_init(Sat_instance* inst) {
 }
 
 struct Sat_dimacs {
-    Hashmap<s64> map_forth;  // map to dimacs
+    Hashmap_u32 map_forth;  // map to dimacs
     Array_dyn<u64> map_back; // map back from dimacs
     Array_dyn<u8> text;
 };
@@ -807,15 +807,14 @@ void sat_write_dimacs(Sat_instance* inst, Sat_dimacs* dimacs) {
             bool neg = lit >> 63;
             u64 var = neg ? ~lit : lit;
 
-            s64* mapped_ptr = hashmap_getcreate(&dimacs->map_forth, var, 0ll);
+            u32* mapped_ptr = hashmap_getcreate(&dimacs->map_forth, var, 0);
             if (*mapped_ptr == 0) {
                 *mapped_ptr = dimacs->map_back.size;
                 array_push_back(&dimacs->map_back, var);
             }
-            s64 mapped = *mapped_ptr;
+            u32 mapped = *mapped_ptr;
 
             if (neg) dimacs->text.data[dimacs->text.size++] = '-';
-#if 1
             s64 width = (174082924800ull - __builtin_clzll(mapped) * 2585827972ull) >> 33;
             u8* p0 = dimacs->text.data + dimacs->text.size;
             u16* p = (u16*)p0;
@@ -831,18 +830,6 @@ void sat_write_dimacs(Sat_instance* inst, Sat_dimacs* dimacs) {
             if (width&1) *(u8*)p = '0' + mapped % 10;
             if (*p0 == '0') {*p0 = '-'; p0[-neg] = ' ';}
             dimacs->text.size += width;
-#else
-            s64 width = 0;
-            for (s64 i = mapped; i; i /= 10) ++width;
-            
-            //s64 width = (174082924800ull - __builtin_clzll(mapped) * 2585827972ull) >> 33;
-            dimacs->text.size += width;
-
-            for (s64 i = 0; i < width; ++i) {
-                dimacs->text.data[dimacs->text.size-1 - i] = '0' + mapped % 10;
-                mapped /= 10;
-            }
-#endif
             
             dimacs->text.data[dimacs->text.size++] = ' ';
         }

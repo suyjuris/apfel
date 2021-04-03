@@ -273,7 +273,7 @@ u64 _hashmap_slot_find(Hashmap_u32* map, u64 key, u64* out_subhash) {
 
     for (;; ++slot_it_it) {
         s64 slot_it = slot_it_it & (map_slots_size-1);
-        auto* slot = &map->slots[slot_it];
+        auto* slot = &map->slots.data[slot_it];
 
         u64 subhash_bc = ~(0x4010040100401ull * subhash);
         u64 slot_hashes_0 = slot->hashes[0];
@@ -293,13 +293,13 @@ u64 _hashmap_slot_find(Hashmap_u32* map, u64 key, u64* out_subhash) {
         // fast-path
         if (count == 1) {
             s64 index = __builtin_ctzll(eq) / 5;
-            if (map->slot_keys[slot_it].keys[index] == key) {
+            if (map->slot_keys.data[slot_it].keys[index] == key) {
                 return slot_it << 4 | index;
             } 
         } else if (count > 1) {
             for (s64 i = 0; i < count; ++i) {
                 s64 index = __builtin_ctzll(eq) / 5;
-                if (map->slot_keys[slot_it].keys[index] == key) {
+                if (map->slot_keys.data[slot_it].keys[index] == key) {
                     return slot_it << 4 | index;
                 }
                 eq &= ~((1ull << (5*index+5)) - 1);
@@ -425,6 +425,12 @@ void hashmap_free(Hashmap_u32* map) {
     array_free(&map->slot_keys);
     map->size = 0;
 }
+
+void hashmap_clear(Hashmap_u32* map) {
+    array_memset(&map->slots);
+    map->size = 0;
+}
+
 
 #ifdef HASHMAP_TEST
 
