@@ -779,7 +779,7 @@ void sat_init(Sat_instance* inst) {
 }
 
 struct Sat_dimacs {
-    Hashmap_u32 map_forth;  // map to dimacs
+    Hashmap<u32> map_forth;  // map to dimacs
     Array_dyn<u64> map_back; // map back from dimacs
     Array_dyn<u8> text;
 };
@@ -797,6 +797,9 @@ void sat_write_dimacs(Sat_instance* inst, Sat_dimacs* dimacs) {
     array_printf(&dimacs->text, "p cnf ");
     s64 patch_var_count_offset = dimacs->text.size;
     array_printf(&dimacs->text, "%20s %lld\n", "", inst->clause_offsets.size-1);
+
+    Array_dyn<u64> lookups;
+    defer { array_free(&lookups); };
     
     for (s64 i = 0; i+1 < inst->clause_offsets.size; ++i) {
         Array_t<u64> clause = array_subindex(inst->clause_offsets, inst->clause_literals, i);
@@ -807,7 +810,8 @@ void sat_write_dimacs(Sat_instance* inst, Sat_dimacs* dimacs) {
             bool neg = lit >> 63;
             u64 var = neg ? ~lit : lit;
 
-            u32* mapped_ptr = hashmap_getcreate(&dimacs->map_forth, var, 0);
+            array_push_back(&lookups, var);
+            u32* mapped_ptr = hashmap_getcreate(&dimacs->map_forth, var, {});
             if (*mapped_ptr == 0) {
                 *mapped_ptr = dimacs->map_back.size;
                 array_push_back(&dimacs->map_back, var);
@@ -839,7 +843,7 @@ void sat_write_dimacs(Sat_instance* inst, Sat_dimacs* dimacs) {
 
         assert(dimacs->text.size <= maximum_size);
     }
-
+    
     s64 n = snprintf((char*)(dimacs->text.data + patch_var_count_offset), 20, "%lld", dimacs->map_forth.size);
     assert(n < 20);
     dimacs->text.data[patch_var_count_offset + n] = ' ';

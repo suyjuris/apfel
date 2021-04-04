@@ -27,10 +27,14 @@ struct Hashmap {
 
 s64 _hashmap_slot_base(u64 map_slots_size, u64 key) {
 #ifndef HASHMAP_TEST
-	u64 x = key + 0x9e3779b97f4a7c15;
-	x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9;
-	x = (x ^ (x >> 27)) * 0x94d049bb133111eb;
-	x =  x ^ (x >> 31);
+    u64 x = key;
+    x ^= (x >> 23) ^ (x >> 51);
+    x *= 0x9e6c63d0676a9a99ull;
+    x ^= (x >> 23) ^ (x >> 51);
+	//u64 x = key + 0x9e3779b97f4a7c15;
+	//x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9;
+	//x = (x ^ (x >> 27)) * 0x94d049bb133111eb;
+	//x =  x ^ (x >> 31);
     return x & (map_slots_size-1);
 #else
     return key & (map_slots_size-1); // no hashing for the fuzzer
@@ -41,11 +45,14 @@ template <typename T>
 s64 _hashmap_slot_find(Hashmap<T>* map, u64 key, bool* out_empty) {
     assert(key != map->empty);
     assert(out_empty);
+    ++global_counters[HASHMAP0_QUERIES];
     s64 slot_base = _hashmap_slot_base(map->slots.size, key);
     for (s64 i = 0; i < map->slots.size; ++i) {
+        ++global_counters[HASHMAP0_CUM_PROBES + (i & (HASHMAP_CUM_PROBES_SIZE-1))];
         s64 slot = (slot_base + i) & (map->slots.size-1);
         s64 slot_key = map->slots.data[slot].key;
         if (slot_key == key) {
+            ++global_counters[HASHMAP0_FOUND];
             *out_empty = false;
             return slot;
         } else if (slot_key == map->empty) {
@@ -214,11 +221,14 @@ u64 hash_u64(u64 x) {
 
 u64 _hash_u64_nofuzz(u64 x) {
 #ifndef HASHMAP_TEST
-    x ^= _hash_rotate_left(x, 39) ^ _hash_rotate_left(x, 17);
     x *= 0x9e6c63d0676a9a99ull;
     x ^= (x >> 23) ^ (x >> 51);
-    x *= 0x9e6d62d06f6a9a9bull;
-    return x ^ (x >> 23) ^ (x >> 51);
+    return x;
+    //x ^= _hash_rotate_left(x, 39) ^ _hash_rotate_left(x, 17);
+    //x *= 0x9e6c63d0676a9a99ull;
+    //x ^= (x >> 23) ^ (x >> 51);
+    //x *= 0x9e6d62d06f6a9a9bull;
+    //return x ^ (x >> 23) ^ (x >> 51);
 #else
     return x;
 #endif
@@ -262,16 +272,18 @@ struct Hashmap_u32 {
     s64 size = 0;
 };
 
-u64 _hashmap_slot_find(Hashmap_u32* map, u64 key, u64* out_subhash) {
+u64 _hashmap_slot_find_u32(Hashmap_u32* map, u64 key, u64* out_subhash) {
     u64 hash = _hash_u64_nofuzz(key);
     u64 subhash = hash & 0x3ff;
     s64 map_slots_size = map->slots.size;
+    ++global_counters[HASHMAP1_QUERIES];
     if (map_slots_size == 0) return -1;
     s64 slot_it_it = hash >> 10;
     subhash += not subhash;
     *out_subhash = subhash;
-
+        
     for (;; ++slot_it_it) {
+        ++global_counters[HASHMAP1_CUM_PROBES + ((slot_it_it - (hash >> 10)) & (HASHMAP_CUM_PROBES_SIZE-1))];
         s64 slot_it = slot_it_it & (map_slots_size-1);
         auto* slot = &map->slots.data[slot_it];
 
@@ -294,12 +306,15 @@ u64 _hashmap_slot_find(Hashmap_u32* map, u64 key, u64* out_subhash) {
         if (count == 1) {
             s64 index = __builtin_ctzll(eq) / 5;
             if (map->slot_keys.data[slot_it].keys[index] == key) {
+                ++global_counters[HASHMAP1_FOUND];
                 return slot_it << 4 | index;
             } 
         } else if (count > 1) {
+            ++global_counters[HASHMAP1_SLOWPATH];
             for (s64 i = 0; i < count; ++i) {
                 s64 index = __builtin_ctzll(eq) / 5;
                 if (map->slot_keys.data[slot_it].keys[index] == key) {
+                    ++global_counters[HASHMAP1_FOUND];
                     return slot_it << 4 | index;
                 }
                 eq &= ~((1ull << (5*index+5)) - 1);
@@ -319,7 +334,7 @@ u64 _hashmap_slot_find(Hashmap_u32* map, u64 key, u64* out_subhash) {
 void _hashmap_setnew2(Hashmap_u32* map, u64 key, u32 value) {
     // @copypaste 2aa0554b87c03a3e
     u64 subhash;
-    u64 slot_info = _hashmap_slot_find(map, key, &subhash);
+    u64 slot_info = _hashmap_slot_find_u32(map, key, &subhash);
     s64 index = slot_info & 0xf;
     s64 slot_it = slot_info >> 4 & 0x7ffffffffffffff;
     auto* slot = &map->slots[slot_it];
@@ -339,7 +354,17 @@ void _hashmap_enlarge(Hashmap_u32* map) {
         map->slot_keys = array_create<typename Hashmap_u32::Slot_keys>(HASHMAP_BASE_SIZE);
         assert(map->size == 0);
     } else {
-        array_resize(&map->slots,     map->slots    .size * 2);
+        // We need 64-byte alignment, so cannot do this:
+        //     array_resize(&map->slots, map->slots.size * 2);
+        auto old = map->slots;
+        map->slots.size *= 2;
+        map->slots.data = (Hashmap_u32::Slot*)aligned_alloc(64, sizeof(*map->slots.data) * map->slots.size);
+        auto tmp = array_subarray(map->slots, 0, old.size);
+        array_memcpy(&tmp, old);
+        array_free(&old);
+        auto tmp2 = array_subarray(map->slots, old.size);
+        array_memset(&tmp2);
+        
         array_resize(&map->slot_keys, map->slot_keys.size * 2);
         
         for (s64 i = 0; i < map->slots.size; ++i) {
@@ -361,7 +386,7 @@ u32* hashmap_getcreate(Hashmap_u32* map, u64 key, u32 init={}) {
     if (map->size * 5 >= map->slots.size * 3 * 12) _hashmap_enlarge(map);
 
     u64 subhash;
-    u64 slot_info = _hashmap_slot_find(map, key, &subhash);
+    u64 slot_info = _hashmap_slot_find_u32(map, key, &subhash);
     s64 index = slot_info & 0xf;
     s64 slot_it = slot_info >> 4 & 0x7ffffffffffffff;
     auto* slot = &map->slots[slot_it];
@@ -382,7 +407,7 @@ void hashmap_setnew(Hashmap_u32* map, u64 key, u32 value) {
 
     // @copypaste 2aa0554b87c03a3e
     u64 subhash;
-    u64 slot_info = _hashmap_slot_find(map, key, &subhash);
+    u64 slot_info = _hashmap_slot_find_u32(map, key, &subhash);
     s64 index = slot_info & 0xf;
     s64 slot_it = slot_info >> 4 & 0x7ffffffffffffff;
     auto* slot = &map->slots[slot_it];
@@ -398,7 +423,7 @@ void hashmap_setnew(Hashmap_u32* map, u64 key, u32 value) {
 
 u32* hashmap_getptr(Hashmap_u32* map, u64 key) {
     u64 subhash;
-    u64 slot_info = _hashmap_slot_find(map, key, &subhash);
+    u64 slot_info = _hashmap_slot_find_u32(map, key, &subhash);
     s64 index = slot_info & 0xf;
     s64 slot_it = slot_info >> 4 & 0x7ffffffffffffff;
     return slot_info >> 63 ? nullptr : &map->slots[slot_it].values[index];
@@ -406,7 +431,7 @@ u32* hashmap_getptr(Hashmap_u32* map, u64 key) {
 
 u32 hashmap_get(Hashmap_u32* map, u64 key) {
     u64 subhash;
-    u64 slot_info = _hashmap_slot_find(map, key, &subhash);
+    u64 slot_info = _hashmap_slot_find_u32(map, key, &subhash);
     s64 index = slot_info & 0xf;
     s64 slot_it = slot_info >> 4 & 0x7ffffffffffffff;
     auto* slot = &map->slots[slot_it];

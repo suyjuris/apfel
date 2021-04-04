@@ -30,6 +30,8 @@ elif [ "$1" = "hashmap_test" ]; then
     "$GXX" $CXXFLAGS -O0 -ggdb -Werror -DHASHMAP_TEST -DHASHMAP_VERBOSE=1 hashmap.cpp -o "hashmap_test"
 elif [ "$1" = "hashmap_fuzz" ]; then
     "afl-clang-lto++" $CXXFLAGS -O0 -ggdb -Werror -Wno-unknown-warning-option -DHASHMAP_TEST -DHASHMAP_VERBOSE=0 -stdlib=libstdc++ hashmap.cpp -L/usr/lib/x86_64-linux-gnu -o "hashmap_fuzz"
+elif [ "$1" = "hashmap_bench" ]; then
+    "$GXX" $CXXFLAGS -march=native -O0 -ggdb -Werror hashmap_bench.cpp -o "hashmap_bench"
 else
     echo "Error: first argument must be either debug or release"
 fi;
