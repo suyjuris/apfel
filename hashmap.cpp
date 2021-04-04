@@ -45,7 +45,7 @@ template <typename T>
 s64 _hashmap_slot_find(Hashmap<T>* map, u64 key, bool* out_empty) {
     assert(key != map->empty);
     assert(out_empty);
-    ++global_counters[HASHMAP0_QUERIES];
+    //++global_counters[HASHMAP0_QUERIES];
 
     if (map->slots.size == 0) {
         *out_empty = true;
@@ -54,11 +54,11 @@ s64 _hashmap_slot_find(Hashmap<T>* map, u64 key, bool* out_empty) {
     
     s64 slot_base = _hashmap_slot_base(map->slots.size, key);
     for (s64 i = 0; ; ++i) {
-        ++global_counters[HASHMAP0_CUM_PROBES + (i & (HASHMAP_CUM_PROBES_SIZE-1))];
+        //++global_counters[HASHMAP0_CUM_PROBES + (i & (HASHMAP_CUM_PROBES_SIZE-1))];
         s64 slot = (slot_base + i) & (map->slots.size-1);
         s64 slot_key = map->slots.data[slot].key;
         if (slot_key == key) {
-            ++global_counters[HASHMAP0_FOUND];
+            //++global_counters[HASHMAP0_FOUND];
             *out_empty = false;
             return slot;
         } else if (slot_key == map->empty) {
@@ -257,72 +257,54 @@ u64 hash_arr(Array_t<u64> arr) {
     return x;
 }
 
+#if 0
 
 struct Hashmap_u32 {
     struct Slot {
-        u64 hashes[2]; // slots: 0 -> 02468a, 1 -> 13579b
-        u32 values[12];
-    };
-    struct Slot_keys {
-        u64 keys[12];
+        u64 keys[5];
+        u32 values[5];
+        u32 hash;
     };
 
     Array_t<Slot> slots;
-    Array_t<Slot_keys> slot_keys;
     s64 size = 0;
 };
 
 u64 _hashmap_slot_find_u32(Hashmap_u32* map, u64 key, u64* out_subhash) {
     u64 hash = _hash_u64_nofuzz(key);
-    u64 subhash = hash & 0x3ff;
+    u64 subhash = hash & 0x3f;
     s64 map_slots_size = map->slots.size;
-    ++global_counters[HASHMAP1_QUERIES];
+    
+    //++global_counters[HASHMAP1_QUERIES];
     if (map_slots_size == 0) return -1;
-    s64 slot_it_it = hash >> 10;
+    s64 slot_it_it = hash >> 6;
     subhash += not subhash;
     *out_subhash = subhash;
+    u64 subhash_bc = ~(0x1041041 * subhash);
         
     for (;; ++slot_it_it) {
-        ++global_counters[HASHMAP1_CUM_PROBES + ((slot_it_it - (hash >> 10)) & (HASHMAP_CUM_PROBES_SIZE-1))];
+        //++global_counters[HASHMAP1_CUM_PROBES + ((slot_it_it - (hash >> 10)) & (HASHMAP_CUM_PROBES_SIZE-1))];
         s64 slot_it = slot_it_it & (map_slots_size-1);
         auto* slot = &map->slots.data[slot_it];
 
-        u64 subhash_bc = ~(0x4010040100401ull * subhash);
-        u64 slot_hashes_0 = slot->hashes[0];
-        u64 cmp0 = slot_hashes_0   ^ subhash_bc;
-        u64 cmp1 = slot->hashes[1] ^ subhash_bc;
-        cmp0 &= cmp0 >> 5;
-        cmp1 &= cmp1 >> 5;
-        cmp0 &= 0x7c1f07c1f07c1full;
-        cmp1 &= 0x7c1f07c1f07c1full;
-        cmp0 += 0x4010040100401ull;
-        cmp1 += 0x4010040100401ull;
-        cmp0 &= 0x80200802008020ull;
-        cmp1 &= 0x80200802008020ull;
-        u64 eq = cmp0 >> 1 | cmp1;
+        u64 slot_hash = slot->hash;
+        u32 cmp = slot_hashes ^ subhash_bc;
+        cmp &= cmp >> 3;
+        cmp &= 0x71c71c7;
+        cmp += 0x1041041;
+        u64 eq = cmp & 0x8208208;
         s64 count = __builtin_popcountll(eq);
-
-        // fast-path
-        if (count == 1) {
-            s64 index = __builtin_ctzll(eq) / 5;
-            if (map->slot_keys.data[slot_it].keys[index] == key) {
-                ++global_counters[HASHMAP1_FOUND];
+        while (eq) {
+            s64 index = __builtin_ctzll(eq) / 6;
+            if (slot->keys[index] == key) {
+                //++global_counters[HASHMAP1_FOUND];
                 return slot_it << 4 | index;
             } 
-        } else if (count > 1) {
-            ++global_counters[HASHMAP1_SLOWPATH];
-            for (s64 i = 0; i < count; ++i) {
-                s64 index = __builtin_ctzll(eq) / 5;
-                if (map->slot_keys.data[slot_it].keys[index] == key) {
-                    ++global_counters[HASHMAP1_FOUND];
-                    return slot_it << 4 | index;
-                }
-                eq &= ~((1ull << (5*index+5)) - 1);
-            }
+            eq &= ~(1ull << (6*index+3));
         }
 
-        s64 filled = slot_hashes_0 >> 60;
-        if (filled < 12) {
+        s64 filled = (slot_hash >> 30) + (slot_hash != 0);
+        if (filled < 5) {
             return slot_it << 4 | filled | (1ull << 63);
         }
     }
@@ -392,9 +374,9 @@ u32* hashmap_getcreate(Hashmap_u32* map, u64 key, u32 init={}) {
     auto* slot = &map->slots[slot_it];
     
     if (slot_info >> 63) {
-        slot->hashes[index & 1] |= subhash << (10 * (index >> 1));
+        slot->hash += not slot_hash;
+        slot->hash |= subhash << (6 * index);
         slot->values[index] = init;
-        slot->hashes[0] += 1ull << 60;
         map->slot_keys[slot_it].keys[index] = key;
         ++map->size;
     }
@@ -403,7 +385,7 @@ u32* hashmap_getcreate(Hashmap_u32* map, u64 key, u32 init={}) {
 }
 
 void hashmap_setnew(Hashmap_u32* map, u64 key, u32 value) {
-    if (map->size * 5 >= map->slots.size * 3 * 12) _hashmap_enlarge(map);
+    if (map->size * 5 >= map->slots.size * 3 * 5) _hashmap_enlarge(map);
 
     // @copypaste 2aa0554b87c03a3e
     u64 subhash;
@@ -413,7 +395,8 @@ void hashmap_setnew(Hashmap_u32* map, u64 key, u32 value) {
     auto* slot = &map->slots[slot_it];
     
     assert_nofuzz(slot_info >> 63);
-    
+
+    slot->hash |= subhash
     slot->hashes[index & 1] |= subhash << (10 * (index >> 1));
     slot->values[index] = value;
     slot->hashes[0] += 1ull << 60;
@@ -456,6 +439,7 @@ void hashmap_clear(Hashmap_u32* map) {
     map->size = 0;
 }
 
+#endif
 
 #ifdef HASHMAP_TEST
 
