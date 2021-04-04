@@ -67,7 +67,7 @@ int main(int argc, char** argv) {
         hash += hash_u64(i);
     }
     printf(u8"%8lldµs hashed data\n", (now() - global_last) / 1000);
-
+    
     Hashmap<u32> hashmap1;
     for (s64 j = 0; j < mul and not only1; ++j) {
         for (u64 i: lookups) {
@@ -114,6 +114,6 @@ int main(int argc, char** argv) {
             global_counters[HASHMAP1_CUM_PROBES + i] * f1
         );
     }
-    
+
     return hash != 29837482;
 }

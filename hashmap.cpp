@@ -46,8 +46,14 @@ s64 _hashmap_slot_find(Hashmap<T>* map, u64 key, bool* out_empty) {
     assert(key != map->empty);
     assert(out_empty);
     ++global_counters[HASHMAP0_QUERIES];
+
+    if (map->slots.size == 0) {
+        *out_empty = true;
+        return -1;
+    }
+    
     s64 slot_base = _hashmap_slot_base(map->slots.size, key);
-    for (s64 i = 0; i < map->slots.size; ++i) {
+    for (s64 i = 0; ; ++i) {
         ++global_counters[HASHMAP0_CUM_PROBES + (i & (HASHMAP_CUM_PROBES_SIZE-1))];
         s64 slot = (slot_base + i) & (map->slots.size-1);
         s64 slot_key = map->slots.data[slot].key;
@@ -61,8 +67,8 @@ s64 _hashmap_slot_find(Hashmap<T>* map, u64 key, bool* out_empty) {
         }
     }
     
-    assert(map->size == 0); // map too full
-    *out_empty = true;
+    assert(false);
+    *out_empty = false;
     return -1;
 }
 
@@ -77,10 +83,6 @@ void _hashmap_enlarge(Hashmap<T>* map) {
         array_resize(&map->slots, map->slots.size * 2);
         for (auto& slot: array_subarray(map->slots, map->slots.size/2)) slot.key = map->empty;
         
-        //for (s64 i = 0; i < map->slots.size/2; ++i) {
-        //    printf("%02x ", (u8)map->slots[i].key);
-        //} puts("");
-        
         for (s64 i = 0; i < map->slots.size; ++i) {
             typename Hashmap<T>::Slot slot = map->slots[i];
             if (slot.key == map->empty) {
@@ -93,8 +95,6 @@ void _hashmap_enlarge(Hashmap<T>* map) {
             assert(index_empty);
             map->slots[index] = slot;
         }
-        
-
     }
 }
 
@@ -361,9 +361,9 @@ void _hashmap_enlarge(Hashmap_u32* map) {
         map->slots.data = (Hashmap_u32::Slot*)aligned_alloc(64, sizeof(*map->slots.data) * map->slots.size);
         auto tmp = array_subarray(map->slots, 0, old.size);
         array_memcpy(&tmp, old);
-        array_free(&old);
         auto tmp2 = array_subarray(map->slots, old.size);
         array_memset(&tmp2);
+        array_free(&old);
         
         array_resize(&map->slot_keys, map->slot_keys.size * 2);
         
