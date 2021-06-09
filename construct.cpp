@@ -27,6 +27,8 @@ enum Constraints_construct: u64 {
     field_border,
     field_global,
     field_global2,
+    field_incremental,
+    field_incremental_border,
     use_all_recipes,
     partition_field,
     partition_border,
@@ -57,10 +59,10 @@ struct Field_var {
         VAR, GROUP_DIR, GROUP_REC, GROUP_ADJ
     };
     enum Kind: u8 {
-        PROD, BELT, BEACON, REC, INP, OUT, KIND_SIZE
+        PROD, BELT, BEACON, PBORDER, REC, INP, OUT, INP_BORDER, KIND_SIZE
     };
     static constexpr char const* kind_names[KIND_SIZE] = {
-        "prod", "belt", "beacon", "rec", "inp", "out"
+        "prod", "belt", "beacon", "pborder", "rec", "inp", "out", "inp_border"
     };
     enum Dirs: u8 {
         UNDIRECTED, RIGHT, TOP, LEFT, BOTTOM, DIR_ALL, DIR_SIZE,
@@ -70,7 +72,7 @@ struct Field_var {
         "none", "rig", "top", "lef", "bot", "all"
     };
 
-    static constexpr u64 OFFSET = 1;
+    static constexpr u64 OFFSET = 2;
     
     s8 x, y;
     u8 type, dir, kind;
@@ -105,7 +107,7 @@ Field_var construct_decompose(u64 lit) {
     Field_var r;
 
     #define GETMASK(lit, mask) ((lit & (mask)) >> __builtin_ctzll((mask)))
-    
+
     r.x    = GETMASK(suffix, Field_var::MASK_X) - Field_var::OFFSET;
     r.y    = GETMASK(suffix, Field_var::MASK_Y) - Field_var::OFFSET;
     r.type = GETMASK(suffix, Field_var::MASK_TYPE);
@@ -145,7 +147,7 @@ u64 construct_compose(Field_var l) {
 struct Field {    
     s8 x, y;
 
-    u64 prod, belt, beacon;
+    u64 prod, belt, beacon, pborder;
     u64 rec_all;
     
     u64 inp(s64 dim) {
@@ -162,6 +164,10 @@ struct Field {
         u8 type = d == Field_var::DIR_ALL ? Field_var::GROUP_DIR : Field_var::VAR;
         return construct_compose({x, y, type, d, Field_var::OUT, el});
     }
+    u64 inp_border(s64 dim) {
+        u16 el = dim; assert(el == dim);
+        return construct_compose({x, y, Field_var::VAR, Field_var::UNDIRECTED, Field_var::INP_BORDER, el});
+    }
     u64 rec(s64 dim) {
         u16 el = dim; assert(el == dim);
         return construct_compose({x, y, Field_var::VAR, Field_var::UNDIRECTED, Field_var::REC, el});
@@ -173,10 +179,11 @@ struct Field {
         prod    = construct_compose({x, y, Field_var::VAR, Field_var::UNDIRECTED, Field_var::PROD});
         belt    = construct_compose({x, y, Field_var::VAR, Field_var::UNDIRECTED, Field_var::BELT});
         beacon  = construct_compose({x, y, Field_var::VAR, Field_var::UNDIRECTED, Field_var::BEACON});
+        pborder = construct_compose({x, y, Field_var::VAR, Field_var::UNDIRECTED, Field_var::PBORDER});
         rec_all = construct_compose({x, y, Field_var::GROUP_REC, Field_var::UNDIRECTED, Field_var::REC});
     }
 
-    static Field global() { return {-1,  0}; }
+    static Field global() { return {-2,  0}; }
     static Field border() { return {-1, -1}; }
 
     Field move(u8 dir) {
@@ -207,8 +214,9 @@ struct Recipe_db {
     };
     Array_dyn<Recipe_rec> recs;
     Array_dyn<u64> data;
-    s64 recipe_count; // This excludes the artificial recipe describing the whole production
-    s64 n_itemmask;
+    s64 recipe_count = 0; // This excludes the artificial recipe describing the whole production
+    s64 n_itemmask = 0;
+    s64 _n_items = 0;
     
     Recipe get(s64 recipe) {
         s64 i = 2 * n_itemmask * recipe;
@@ -283,7 +291,15 @@ void construct_expand(Sat_instance* inst, u64 ovar, Array_dyn<u64>* out_lits) {
                 ));
             }
         } else {
-            assert(false);
+            assert(v.inbounds_almost(nx, ny));
+            
+            for (s64 d = Field_var::BEG; d < Field_var::END; ++d) {
+                Field_var v1 = v.move(d);
+                if (not v1.inbounds(nx, ny)) continue;
+                array_push_back(out_lits, construct_compose(
+                    {v1.x, v1.y, Field_var::VAR, Field_var::dir_back(d), v.kind, v.el}
+                ));
+            }
         }
     } else {
         assert(false);
@@ -601,8 +617,110 @@ void construct_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
         }
         
     } break;
+        
+    case field_incremental: {
+        assert(args.size == 2);
+        Field f {(s64)args[0], (s64)args[1]};
 
+        // Exactly one type
+        sat_add(inst, exactly_one, {f.prod, f.belt, f.beacon, f.pborder});
 
+        // Exactly one recipe if prod, else zero
+        sat_add(inst, at_most_one, {f.rec_all});
+        sat_push_add_pop(inst, {f.prod}, clause, {f.rec_all});
+        sat_push_add_pop(inst, {~f.prod}, logical_and, {~f.rec_all});
+
+        // For each type of recipe, do the correct inputs and outputs
+        for (s64 r_it = 0; r_it < rdb->recipe_count; ++r_it) {
+            Recipe r = rdb->get(r_it);
+            sat_push(inst, {f.rec(r_it)});
+
+            for (s64 i = 0; i < n_items; ++i) {
+                if (bitset_get(r.mask_input,  i)) {
+                    // If it is an input of the recipe, we need to have it
+                    sat_add(inst, clause, {f.inp(i)});
+                } else {
+                    // Else we do not want it @Redundant
+                    sat_add(inst, logical_and, {~f.inp(i)});
+                }
+
+                // If it is NOT an output, we must not output it
+                if (not bitset_get(r.mask_output, i)) {
+                    sat_add(inst, logical_and, {~f.out(i, Field_var::DIR_ALL)});
+                }
+            }
+            
+            sat_pop(inst);
+        }
+
+        // Belts need to obey item conservation
+        sat_push(inst, {f.belt});
+        for (s64 i = 0; i < n_items; ++i) {
+            // A belt only outputs items which it has
+            for (s64 d = Field_var::BEG; d < Field_var::END; ++d) {
+                sat_add(inst, implies, {f.out(i, d), f.inp(i)});
+            }
+        }
+        
+        sat_pop(inst);
+
+        // There can be at most 6 items on a belt
+        s64 index = inst->rewrite_temp.size;
+        for (s64 i = 0; i < n_items; ++i) {
+            array_push_back(&inst->rewrite_temp, f.inp(i));
+        }
+        sat_push_add_pop(inst, {f.belt}, at_most_k, {sat_group(inst, array_subarray(inst->rewrite_temp, index)), 6});
+        
+        Field fg = Field::global();
+        for (s64 i = 0; i < n_items; ++i) {
+            // Having an item as input means that an adjacent tile gave it to us
+            sat_add(inst, implies, {f.inp(i), f.adjout(i)});
+
+            for (s64 d = Field_var::BEG; d < Field_var::END; ++d) {
+                // If a belt outputs into a direction, the corresponding global flag must be set
+                sat_addg(inst, implies, {f.belt, f.out(i, d)}, {fg.out(i, d)});
+                
+                // If we output in a direction, that field must not output back
+                Field f2 = f.move(d);
+                if (f2.inbounds(nx, ny)) {
+                    //DEBUGsat_add(inst, implies, {f.out(i, d), ~f2.out(i, Field_var::dir_back(d))});
+                    sat_addg(inst, implies, {f.belt, f2.belt, f.out(i, d)}, {~f2.out(i, Field_var::dir_back(d))});
+                }
+            }
+        }
+        
+        // No beacons (yet)
+        sat_add(inst, clause, {~f.beacon});
+    } break;
+
+    case field_incremental_border: {
+        assert(args.size == 2);
+        Field f {(s64)args[0], (s64)args[1]};
+        sat_push(inst, {f.pborder});
+
+        // A border field is precisely a border
+        sat_add(inst, logical_and, {~f.prod, ~f.belt, ~f.beacon});
+
+        // The global recipe
+        Recipe rg = rdb->get(rdb->recipe_count);
+        
+        for (s64 i = 0; i < n_items; ++i) {
+            // Having an item as input to the border means that an adjacent tile gave it to us
+            sat_add(inst, implies, {f.inp(i), f.adjout(i)});
+    
+            // Output an item only if it is an input of the global recipe
+            if (not bitset_get(rg.mask_input, i)) {
+                sat_add(inst, logical_and, {~f.out(i, Field_var::DIR_ALL)});
+            }
+        }
+
+        sat_pop(inst);
+
+        for (s64 i = 0; i < n_items; ++i) {
+            sat_push_add_pop(inst, {f.inp_border(i)}, logical_and, {f.pborder, f.inp(i)});
+        }
+    } break;
+        
     }
 
 }
@@ -1378,8 +1496,9 @@ bool sat_solver_run(Sat_instance* inst, Array_t<u8> solver, Sat_solution* out_so
     exit(3);
 }
 
-void construct_solution_print(Construct_params* cpar, Sat_instance* inst, Sat_solution* sol, bool do_global=true) {
+void construct_solution_print(Construct_params* cpar, Sat_instance* inst, Sat_solution* sol, bool do_global=true, bool do_border=true, Array_t<s64> item_map_back = {}, Array_t<s64> recipe_map_back = {}) {
     s64 n_items = hashmap_get(&inst->params, Construct::param_n_items);
+    s64 recipe_count = recipe_map_back.size == 0 ? cpar->rdb.recipe_count : recipe_map_back.size;
     
     auto count_inp = [cpar, sol, n_items](Field f) {
         s64 count = 0;
@@ -1391,13 +1510,19 @@ void construct_solution_print(Construct_params* cpar, Sat_instance* inst, Sat_so
         for (s64 item = 0; item < n_items; ++item) count += (*sol)[f.out(item, d)];
         return count;
     };
-    auto count_rec = [cpar, sol, n_items](Field f) {
+    auto count_rec = [cpar, sol, n_items, recipe_count](Field f) {
         s64 count = 0;
-        for (s64 i = 0; i < cpar->rdb.recipe_count; ++i) count += (*sol)[f.rec(i)];
+        for (s64 i = 0; i < recipe_count; ++i) count += (*sol)[f.rec(i)];
         return count;
     };
     auto pad = [](s64 n) {
         for (s64 i = 0; i < n; ++i) fputc(' ', stdout);
+    };
+    auto _digit_i = [&item_map_back](s64 n) {
+        _digit(item_map_back.size == 0 ? n : item_map_back[n]);
+    };
+    auto _digit_r = [&recipe_map_back](s64 n) {
+        _digit(recipe_map_back.size == 0 ? n : recipe_map_back[n]);
     };
 
     s8 nx = (s8)hashmap_get(&inst->params, Construct::param_nx);
@@ -1442,7 +1567,7 @@ void construct_solution_print(Construct_params* cpar, Sat_instance* inst, Sat_so
             s64 count = count_out(f, Field_var::TOP);
             pad((w-count) / 2);
             for (s64 item = 0; item < n_items; ++item) {
-                if ((*sol)[f.out(item, Field_var::TOP)]) _digit(item);
+                if ((*sol)[f.out(item, Field_var::TOP)]) _digit_i(item);
             }
             pad((w-count + 1) / 2);
         }
@@ -1455,7 +1580,7 @@ void construct_solution_print(Construct_params* cpar, Sat_instance* inst, Sat_so
             s64 count = count_out(f, Field_var::LEFT);
             fputs("< ", stdout);
             for (s64 item = 0; item < n_items; ++item) {
-                if ((*sol)[f.out(item, Field_var::LEFT)]) _digit(item);
+                if ((*sol)[f.out(item, Field_var::LEFT)]) _digit_i(item);
             }
             pad(w-count-2);
         }
@@ -1468,7 +1593,7 @@ void construct_solution_print(Construct_params* cpar, Sat_instance* inst, Sat_so
             s64 count = count_inp(f);
             pad((w-count)/2);
             for (s64 item = 0; item < n_items; ++item) {
-                if ((*sol)[f.inp(item)]) _digit(item);
+                if ((*sol)[f.inp(item)]) _digit_i(item);
             }
             pad((w-count+1)/2);
         }
@@ -1485,17 +1610,22 @@ void construct_solution_print(Construct_params* cpar, Sat_instance* inst, Sat_so
             }
             if ((*sol)[f.prod]) {
                 s64 count = 0;
-                for (s64 r = 0; r < cpar->rdb.recipe_count; ++r) count += (*sol)[f.rec(r)];
+                for (s64 r = 0; r < recipe_count; ++r) count += (*sol)[f.rec(r)];
 
                 pad((w-count) / 2);
-                for (s64 r = 0; r < cpar->rdb.recipe_count; ++r) {
-                    if ((*sol)[f.rec(r)]) _digit(r);
+                for (s64 r = 0; r < recipe_count; ++r) {
+                    if ((*sol)[f.rec(r)]) _digit_r(r);
                 }
                 pad((w-count+1) / 2);
             }
             if ((*sol)[f.beacon]) {
                 pad((w-1) / 2);
                 fputs("*", stdout);
+                pad((w-1+1) / 2);
+            }
+            if ((*sol)[f.pborder]) {
+                pad((w-1) / 2);
+                fputs("+", stdout);
                 pad((w-1+1) / 2);
             } 
         }
@@ -1508,7 +1638,7 @@ void construct_solution_print(Construct_params* cpar, Sat_instance* inst, Sat_so
             s64 count = count_out(f, Field_var::RIGHT);
             pad(w-count-2);
             for (s64 item = 0; item < n_items; ++item) {
-                if ((*sol)[f.out(item, Field_var::RIGHT)]) _digit(item);
+                if ((*sol)[f.out(item, Field_var::RIGHT)]) _digit_i(item);
             }
             fputs(" >", stdout);
         }
@@ -1521,7 +1651,7 @@ void construct_solution_print(Construct_params* cpar, Sat_instance* inst, Sat_so
             s64 count = count_out(f, Field_var::BOTTOM);
             pad((w-count) / 2);
             for (s64 item = 0; item < n_items; ++item) {
-                if ((*sol)[f.out(item, Field_var::BOTTOM)]) _digit(item);
+                if ((*sol)[f.out(item, Field_var::BOTTOM)]) _digit_i(item);
             }
             pad((w-count + 1) / 2);
         }
@@ -1533,7 +1663,7 @@ void construct_solution_print(Construct_params* cpar, Sat_instance* inst, Sat_so
         {Field f = Field::global();
             for (s64 i = 0; i < n_items; ++i) {
                 if (i) fputs(", ", stdout);
-                _digit(i);
+                _digit_i(i);
                 fputc(' ', stdout);
                 char const dn[] = "rtlb";
                 for (u8 d = Field_var::BEG; d < Field_var::END; ++d) {
@@ -1542,26 +1672,28 @@ void construct_solution_print(Construct_params* cpar, Sat_instance* inst, Sat_so
             }}
         fputs("\n", stdout);
     }
-    
-    fputs("Border:", stdout);
-    {Field f = Field::border();
-    fputs("\n  inputs:  ", stdout);
-    for (s64 i = 0; i < n_items; ++i) {
-        if ((*sol)[f.inp(i)]) _digit(i);
-    }
-    fputs("\n  outputs:\n", stdout);
-    for (u64 v1_lit: sat_expand(inst, f.out(0, Field_var::DIR_ALL), &inst->explain_temp)) {
-        Field_var v1 = construct_decompose(v1_lit);
-        fprintf(stdout, "  (%2d,%2d): ", (int)v1.x, (int)v1.y);
+
+    if (do_border) {
+        fputs("Border:", stdout);
+        {Field f = Field::border();
+        fputs("\n  inputs:  ", stdout);
         for (s64 i = 0; i < n_items; ++i) {
-            Field_var v2 = v1;
-            v2.el = i;
-            if ((*sol)[construct_compose(v2)]) _digit(i);
+            if ((*sol)[f.inp(i)]) _digit(i);
+        }
+        fputs("\n  outputs:\n", stdout);
+        for (u64 v1_lit: sat_expand(inst, f.out(0, Field_var::DIR_ALL), &inst->explain_temp)) {
+            Field_var v1 = construct_decompose(v1_lit);
+            fprintf(stdout, "  (%2d,%2d): ", (int)v1.x, (int)v1.y);
+            for (s64 i = 0; i < n_items; ++i) {
+                Field_var v2 = v1;
+                v2.el = i;
+                if ((*sol)[construct_compose(v2)]) _digit(i);
+            }
+            fputs("\n", stdout);
+        }
         }
         fputs("\n", stdout);
     }
-    }
-    fputs("\n", stdout);
 }
 
 void construct_solution_partition_print(Construct_params* cpar, Sat_instance* inst, Sat_solution* sol) {
@@ -2155,6 +2287,404 @@ void construct_sparsecut_partition(Construct_params* cpar, Sat_instance* inst, S
     fclose(f);
 }
 
+void bitset_or(Array_t<u64>* target, Array_t<u64> other) {
+    assert(target->size == other.size);
+    for (s64 i = 0; i < target->size; ++i) {
+        (*target)[i] |= other[i];
+    }
+}
+
+Recipe_db construct_recipedb_subset(Construct_params* cpar, Array_t<u64> mask_recipes, Array_dyn<s64>* out_items_map_back) {
+    auto* rdb = &cpar->rdb;
+    Array_t<u64> items_needed {(u64*)alloca(cpar->rdb.n_itemmask * sizeof(u64)), cpar->rdb.n_itemmask};
+    array_memset(&items_needed);
+
+    for (s64 i = 0; i < rdb->recipe_count; ++i) {
+        if (not bitset_get(mask_recipes, i)) continue;
+        Recipe r = rdb->get(i);
+        bitset_or(&items_needed, r.mask_input);
+        bitset_or(&items_needed, r.mask_output);
+    }
+
+    Array_dyn<s64> items_map_forth; // map old item index -> new item index
+    defer { array_free(&items_map_forth); };
+
+    s64 n_items_new = 0;
+    for (s64 i = 0; i < cpar->n_items; ++i) {
+        if (bitset_get(items_needed, i)) {
+            array_push_back(&items_map_forth, n_items_new);
+            if (out_items_map_back) {
+                array_push_back(out_items_map_back, i);
+            }
+            ++n_items_new;
+        } else {
+            array_push_back(&items_map_forth, -1);
+        }
+    }
+
+    Recipe_db rdb_new;
+    rdb_new.n_itemmask = (n_items_new + 63) / 64;
+    
+    for (s64 i = 0; i < rdb->recipe_count; ++i) {
+        if (not bitset_get(mask_recipes, i)) continue;
+        Recipe r = rdb->get(i);
+        
+        array_push_back(&rdb_new.recs, {r.name, r.beacons, r.entity});
+        array_append_zero(&rdb_new.data, 2*rdb_new.n_itemmask);
+        ++rdb_new.recipe_count;
+
+        Recipe r_new = rdb_new.get(rdb_new.recipe_count-1);
+        for (s64 i = 0; i < cpar->n_items; ++i) {
+            if (bitset_get(r.mask_input, i)) {
+                bitset_set(&r_new.mask_input, items_map_forth[i], true);
+            }
+            if (bitset_get(r.mask_output, i)) {
+                bitset_set(&r_new.mask_output, items_map_forth[i], true);
+            }
+        }
+    }
+
+    Recipe rg = rdb->get(rdb->recipe_count);
+    array_push_back(&rdb_new.recs, {rg.name, rg.beacons, rg.entity});
+    array_append_zero(&rdb_new.data, 2*rdb_new.n_itemmask);
+    
+    Recipe rg_new = rdb_new.get(rdb_new.recipe_count);
+
+    for (s64 i = 0; i < rdb_new.recipe_count; ++i) {
+        Recipe r_new = rdb_new.get(i);
+        bitset_or(&rg_new.mask_input,  r_new.mask_input);
+        bitset_or(&rg_new.mask_output, r_new.mask_output);
+    }
+
+    for (s64 i = 0; i < cpar->n_items; ++i) {
+        s64 i_new = items_map_forth[i];
+        if (i_new == -1) continue;
+
+        bitset_set(&rg_new.mask_input, i_new, bitset_get(rg.mask_input, i) and bitset_get(rg_new.mask_input, i_new));
+
+        bool is_used_by_old = false;
+        for (s64 r = 0; r < rdb->recipe_count; ++r) {
+            if (bitset_get(mask_recipes, r)) continue;
+            is_used_by_old |= bitset_get(rdb->get(r).mask_input, i);
+        }
+        
+        bitset_set(&rg_new.mask_output, i_new, (is_used_by_old or bitset_get(rg.mask_output, i)) and bitset_get(rg_new.mask_output, i_new));
+    }
+
+    rdb_new._n_items = n_items_new;
+    return rdb_new;
+}
+
+s64 construct_recipe_lookup(Construct_params* cpar, Array_t<u8> name) {
+    for (s64 i = 0; i < cpar->rdb.recipe_count; ++i) {
+        Array_t<u8> i_name = construct_string_load(cpar, cpar->rdb.get(i).name);
+        if (array_equal(name, i_name)) return i;
+    }
+    return -1;
+}
+
+void construct_partition_parse(Construct_params* cpar, Array_t<u8> fname, Array_dyn<s64>* out_partition_offsets, Array_dyn<s64>* out_partition_data) {
+    assert(out_partition_offsets and out_partition_data);
+    assert(out_partition_offsets->size == 0 and out_partition_data->size == 0);
+
+    Array_t<u8> text = array_load_from_file(fname);
+    defer { array_free(&text); };
+
+    if (out_partition_offsets->size == 0) {
+        array_push_back(out_partition_offsets, out_partition_data->size);
+    }
+    
+    s64 last = 0;
+    for (s64 i = 0; i <= text.size; ++i) {
+        if (i == text.size or text[i] == ' ' or text[i] == '\n') {
+            auto word = array_subarray(text, last, i);
+            if (word.size > 0) {
+                s64 word_r = construct_recipe_lookup(cpar, word);
+                if (word_r == -1) {
+                    fputs("Error: could not resolve recipe name '", stderr);
+                    fwrite(word.data, 1, word.size, stderr);
+                    fputs("'\n", stderr);
+                    exit(6);
+                }
+
+                array_push_back(out_partition_data, word_r);
+            }
+            last = i+1;
+        }
+
+        if (i == text.size or text[i] == '\n') {
+            if (out_partition_offsets->back() != out_partition_data->size) {
+                array_push_back(out_partition_offsets, out_partition_data->size);
+            }
+        }
+    }
+}
+
+void construct_recipedb_print(Construct_params* cpar, Recipe_db* rdb, Array_t<s64> item_map_back, FILE* f) {
+    for (s64 rec_i = 0; rec_i <= rdb->recipe_count; ++rec_i) {
+        auto rec = rdb->get(rec_i);
+        Array_t<u8> name = construct_string_load(cpar, rec.name);
+        
+        fputs("recipe ", f);
+        fwrite(name.data, 1, name.size, f);
+        fputs(" \n", f);
+        for (s64 i = 0; i < cpar->n_items; ++i) {
+            if (not bitset_get(rec.mask_input, i)) continue;
+            fputs("  in ", f);
+            
+            Array_t<u8> item = construct_string_load(cpar, cpar->item_names[item_map_back[i]]);
+            fwrite(item.data, 1, item.size, f);
+            fputc('\n', f);
+        }
+        for (s64 i = 0; i < cpar->n_items; ++i) {
+            if (not bitset_get(rec.mask_output, i)) continue;
+            fputs("  out ", f);
+            
+            Array_t<u8> item = construct_string_load(cpar, cpar->item_names[item_map_back[i]]);
+            fwrite(item.data, 1, item.size, f);
+            fputc('\n', f);
+        }
+    }
+}
+
+void construct_incremental_instance(Construct_params* cpar, Sat_instance* inst, Array_t<u64> mask_recipes, Array_dyn<s64>* out_items_map_back) {
+    using namespace Sat;
+    using namespace Construct;
+
+    //@Leak
+    Recipe_db rdb = construct_recipedb_subset(cpar, mask_recipes, out_items_map_back);
+    construct_recipedb_print(cpar, &rdb, *out_items_map_back, stdout);
+    
+    hashmap_set(&inst->params, param_nx, cpar->nx);
+    hashmap_set(&inst->params, param_ny, cpar->ny);
+    hashmap_set(&inst->params, param_n_items, rdb._n_items);
+    hashmap_set(&inst->params, param_recipes, (s64)&rdb);
+        
+    sat_register_expand_func(inst, GROUP_CONSTRUCT, &construct_expand);
+    sat_register_rewrite_func(inst, CONSTRAINT_CONSTRUCT, &construct_rewrite);
+    for (u64 i: {VAR_CONSTRUCT, GROUP_CONSTRUCT, CONSTRAINT_CONSTRUCT}) {
+        sat_register_explain_func(inst, i, &construct_explain);
+    }
+
+    Recipe rg = rdb.get(rdb.recipe_count);
+
+    for (s64 y = 0; y < cpar->ny; ++y) {
+        for (s64 x = 0; x < cpar->nx; ++x) {
+            sat_add(inst, field_incremental, {(u64)x, (u64)y});
+        }
+    }
+    for (s64 y = -1; y <= cpar->ny; ++y) {
+        for (s64 x = -1; x <= cpar->nx; ++x) {
+            if ((x == -1 or x == cpar->nx) and (y == -1 or y == cpar->ny)) continue;
+            sat_add(inst, field_incremental_border, {(u64)x, (u64)y});
+
+            Field f {x, y};
+            if (not f.inbounds(cpar->nx, cpar->ny)) {
+                sat_add(inst, clause, {f.pborder});
+            }
+        }
+    }
+
+    sat_add(inst, field_global, {});
+
+    for (s64 i = 0; i < rdb._n_items; ++i) {
+        // If it is an output of the global recipe, some border field must take it as input
+        if (not bitset_get(rg.mask_output, i)) continue;
+        s64 index = inst->rewrite_temp.size;
+        for (s64 y = -1; y <= cpar->ny; ++y) {
+            for (s64 x = -1; x <= cpar->nx; ++x) {
+                if ((x == -1 or x == cpar->nx) and (y == -1 or y == cpar->ny)) continue;
+                Field f {x, y};
+                array_push_back(&inst->rewrite_temp, f.inp_border(i));
+            }
+        }
+        sat_add(inst, clause, array_subarray(inst->rewrite_temp, index));
+
+       inst->rewrite_temp.size = index;
+    }
+    
+}
+
+
+void construct_incremental_solution_print(Construct_params* cpar, Sat_instance* inst, Sat_solution* sol, Array_t<s64> item_map_back = {}, Array_t<s64> recipe_map_back = {}) {
+    s64 n_items = hashmap_get(&inst->params, Construct::param_n_items);
+    s64 recipe_count = recipe_map_back.size == 0 ? cpar->rdb.recipe_count : recipe_map_back.size;
+    
+    auto count_inp = [cpar, sol, n_items](Field f) {
+        s64 count = 0;
+        for (s64 item = 0; item < n_items; ++item) count += sol->istrue(f.inp(item));
+        return count;
+    };
+    auto count_out = [cpar, sol, n_items](Field f, u8 d) {
+        s64 count = 0;
+        for (s64 item = 0; item < n_items; ++item) count += sol->istrue(f.out(item, d));
+        return count;
+    };
+    auto count_rec = [cpar, sol, n_items, recipe_count](Field f) {
+        s64 count = 0;
+        for (s64 i = 0; i < recipe_count; ++i) count += sol->istrue(f.rec(i));
+        return count;
+    };
+    auto pad = [](s64 n) {
+        for (s64 i = 0; i < n; ++i) fputc(' ', stdout);
+    };
+    auto _digit_i = [&item_map_back](s64 n) {
+        _digit(item_map_back.size == 0 ? n : item_map_back[n]);
+    };
+    auto _digit_r = [&recipe_map_back](s64 n) {
+        _digit(recipe_map_back.size == 0 ? n : recipe_map_back[n]);
+    };
+
+    s8 nx = (s8)hashmap_get(&inst->params, Construct::param_nx);
+    s8 ny = (s8)hashmap_get(&inst->params, Construct::param_ny);
+    s64 x0 = -1, x1 = ny;
+    s64 y0 = -1, y1 = ny;
+    
+    s64 max_outputs = 0;
+    for (s64 y = y1; y >= y0; --y) {
+        for (s64 x = x0; x <= x1; ++x) {
+            Field f {x, y};
+
+            {s64 count = count_inp(f);
+            if (max_outputs < count) max_outputs = count;}
+            
+            {s64 count = count_rec(f);
+            if (max_outputs < count) max_outputs = count;}
+            
+            for (s64 d = Field_var::BEG; d < Field_var::END; ++d) {
+                s64 count = count_out(f, d);
+                if (max_outputs < count) max_outputs = count;
+            }
+
+        }
+    }
+
+    s64 w = max_outputs + 2;
+    
+    fputs("Fields:\n", stdout);
+    for (s64 y = y1; y >= y0; --y) {
+        if (y < y1) {
+            fputs("  ", stdout);
+            for (s64 x = x0; x <= x1; ++x) {
+                if (x != x0) fputs(u8"┼", stdout);
+                for (s64 i = 0; i < w; ++i) fputs(u8"─", stdout);
+            }
+            fputs("\n", stdout);
+        }
+        
+        fputs("  ", stdout);
+        for (s64 x = x0; x <= x1; ++x) {
+            if (x != x0) fputs(u8"│", stdout);
+            Field f {x, y};
+            s64 count = count_out(f, Field_var::TOP);
+            pad((w-count) / 2);
+            for (s64 item = 0; item < n_items; ++item) {
+                if (sol->istrue(f.out(item, Field_var::TOP))) _digit_i(item);
+            }
+            pad((w-count + 1) / 2);
+        }
+        fputs("\n", stdout);
+        
+        fputs("  ", stdout);
+        for (s64 x = x0; x <= x1; ++x) {
+            if (x != x0) fputs(u8"│", stdout);
+            Field f {x, y};
+            s64 count = count_out(f, Field_var::LEFT);
+            fputs("< ", stdout);
+            for (s64 item = 0; item < n_items; ++item) {
+                if (sol->istrue(f.out(item, Field_var::LEFT))) _digit_i(item);
+            }
+            pad(w-count-2);
+        }
+        fputs("\n", stdout);
+        
+        fputs("  ", stdout);
+        for (s64 x = x0; x <= x1; ++x) {
+            if (x != x0) fputs(u8"│", stdout);
+            Field f {x, y};
+            s64 count = count_inp(f);
+            pad((w-count)/2);
+            for (s64 item = 0; item < n_items; ++item) {
+                if (sol->istrue(f.inp(item))) _digit_i(item);
+            }
+            pad((w-count+1)/2);
+        }
+        fputs("\n", stdout);
+
+        fputs("  ", stdout);
+        for (s64 x = x0; x <= x1; ++x) {
+            if (x != x0) fputs(u8"│", stdout);
+            Field f {x, y};
+            if (sol->istrue(f.belt)) {
+                pad((w-1) / 2);
+                fputs("#", stdout);
+                pad((w-1+1) / 2);
+            } else if (sol->istrue(f.prod)) {
+                s64 count = 0;
+                for (s64 r = 0; r < recipe_count; ++r) count += sol->istrue(f.rec(r));
+
+                pad((w-count) / 2);
+                for (s64 r = 0; r < recipe_count; ++r) {
+                    if (sol->istrue(f.rec(r))) _digit_r(r);
+                }
+                pad((w-count+1) / 2);
+            } else if (sol->istrue(f.beacon)) {
+                pad((w-1) / 2);
+                fputs("*", stdout);
+                pad((w-1+1) / 2);
+            } else if (sol->istrue(f.pborder)) {
+                pad((w-1) / 2);
+                fputs("+", stdout);
+                pad((w-1+1) / 2);
+            } else {
+                pad((w-1) / 2);
+                fputs("?", stdout);
+                pad((w-1+1) / 2);
+            }
+        }
+        fputs("\n", stdout);
+        
+        fputs("  ", stdout);
+        for (s64 x = x0; x <= x1; ++x) {
+            if (x != x0) fputs(u8"│", stdout);
+            Field f {x, y};
+            s64 count = count_out(f, Field_var::RIGHT);
+            pad(w-count-2);
+            for (s64 item = 0; item < n_items; ++item) {
+                if (sol->istrue(f.out(item, Field_var::RIGHT))) _digit_i(item);
+            }
+            fputs(" >", stdout);
+        }
+        fputs("\n", stdout);
+
+        fputs("  ", stdout);
+        for (s64 x = x0; x <= x1; ++x) {
+            if (x != x0) fputs(u8"│", stdout);
+            Field f {x, y};
+            s64 count = count_out(f, Field_var::BOTTOM);
+            pad((w-count) / 2);
+            for (s64 item = 0; item < n_items; ++item) {
+                if (sol->istrue(f.out(item, Field_var::BOTTOM))) _digit_i(item);
+            }
+            pad((w-count + 1) / 2);
+        }
+        fputs("\n", stdout);        
+    }
+
+    fputs("Global:\n  ", stdout);
+    {Field f = Field::global();
+        for (s64 i = 0; i < n_items; ++i) {
+            if (i) fputs(", ", stdout);
+            _digit_i(i);
+            fputc(' ', stdout);
+            char const dn[] = "rtlb";
+            for (u8 d = Field_var::BEG; d < Field_var::END; ++d) {
+                fputc(sol->istrue(f.out(i, d)) ? dn[d-Field_var::BEG] : '-', stdout);
+            }
+        }}
+    fputs("\n", stdout);
+}
+
 
 int main(int argc, char** argv) {
     if (argc < 3) {
@@ -2164,7 +2694,6 @@ int main(int argc, char** argv) {
 
     auto inst_str = array_load_from_file(array_create_str(argv[2]));
     Construct_params params;
-    memset(&params, 0, sizeof(params));
     construct_params_parse(&params, inst_str);
 
     Sat_instance inst;
@@ -2305,6 +2834,41 @@ int main(int argc, char** argv) {
         
         
         return 1;
+    } else if (strcmp(argv[1], "incremental") == 0) {
+        if (argc != 4) {
+            fprintf(stderr, "Usage:\n  %s %s <file> <partition>\n", argv[0], argv[1]);
+            return 1;
+        }
+
+        Array_dyn<s64> partition_offsets;
+        Array_dyn<s64> partition_data;
+        construct_partition_parse(&params, array_create_str(argv[3]), &partition_offsets, &partition_data);
+
+        Array_t<u64> mask_recipes = array_create<u64>((params.rdb.recipe_count + 63) / 64);
+        for (s64 i: array_subindex(partition_offsets, partition_data, 0)) {
+            bitset_set(&mask_recipes, i, true);
+        }
+
+        Array_dyn<s64> item_map_back;
+        construct_incremental_instance(&params, &inst, mask_recipes, &item_map_back);
+
+        Array_dyn<s64> recipe_map_back;
+        for (s64 i = 0; i < params.rdb.recipe_count; ++i) {
+            if (bitset_get(mask_recipes, i)) {
+                array_push_back(&recipe_map_back, i);
+            }
+        }
+        
+        Sat_solution sol;
+        bool is_sat = sat_solver_run(&inst, "kissat"_arr, &sol);
+
+        if (is_sat) {
+            construct_incremental_solution_print(&params, &inst, &sol, item_map_back, recipe_map_back);
+        } else {
+            fputs("\nInstance is not satisfiable. Sorry.\n", stdout);
+        }
+        
+        return 0;
     }
     
 

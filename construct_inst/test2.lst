@@ -6,6 +6,7 @@ transport_max 10
 partition_max 25
 
 sparsecut_maxsize 16
+sparsecut_groups 3
 
 recipe crystal-full-cutting
   entity assembling-machine-5
