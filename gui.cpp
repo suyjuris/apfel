@@ -238,7 +238,7 @@ u32 gui_pointable(Gui* gui, Array_t<u8> name, Array_t<s64> name_args, Vec2 p = {
 #define GUI_TIMER(gui) auto GUI_CONCAT(unnamed_timer, __LINE__) {gui_timer((gui), {(u8*)__func__, (s64)sizeof(__func__)-1})};
 
 Gui::Timer gui_timer(Gui* gui, Array_t<u8> name) {
-    if (gui == nullptr) return;
+    assert(gui);
     u64 id = hash_str(name);
     for (s64 i = 0; i < gui->timer_data.size; ++i) {
         auto* p = &gui->timer_data[i];
@@ -572,7 +572,7 @@ void gui_scrollbar(
             size.x - bar_size.x,
             offset / offset_max * (size.y - bar_size.y)
         };
-        point->p = bar_p;
+        point->p = p + bar_p;
         point->size = bar_size;
         point->z = z;
         

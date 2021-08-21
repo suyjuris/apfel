@@ -1097,6 +1097,15 @@ void factorio_db_parse(Factorio_db* fdb, Array_t<u8> data) {
         if (array_equal_str(heading, "instance")) {
             Factorio_instance fi;
             match(&i, Token::IDENTIFIER, &fi.name);
+
+            for (auto inst: fdb->instances) {
+                if (array_equal(inst.name, fi.name)) {
+                    fprintf(stderr, "Warning (line %lld): Multiple instances with name '", tokens[i-1].line);
+                    fwrite(fi.name.data, 1, fi.name.size, stderr);
+                    fprintf(stderr, "'. This will lead to weird behaviour.\n");
+                }
+            }
+            
             match(&i, '{');
             while (tokens[i].type != '}') {
                 Array_t<u8> par_name;
@@ -1155,7 +1164,7 @@ void factorio_db_parse(Factorio_db* fdb, Array_t<u8> data) {
                 
                 if (tokens[i].type == ',') ++i;
             }
-
+            
             array_push_back(&fdb->instances, fi);
             match(&i, '}');
         } else if (array_equal_str(heading, "solution")) {

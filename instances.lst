@@ -20,19 +20,6 @@ solution 1to3 sol1 {
     .^.<.<.<
 }
 
-instance 2to5 {
-    nx = 6, ny = 6, scale_fac = 2, do_blocking = 0,
-    yoff_output = [3, 4], yoff_input = [1, 2, 3, 4, 5]
-}
-solution 2to5 sol1 {
-    .v.<.<.<.<..
-    .v..S>>u.^u>
-    .>S>S>S>.^S>
-    S>S>.>S>S>S>
-    S>.>.>.>S>S>
-    ..........S>
-}
-
 instance 2to3 {
     nx = 6, ny = 5, scale_fac = 2, do_blocking = 0,
     yoff_output = [3, 4], yoff_input = [2, 4, 3]
@@ -71,21 +58,20 @@ solution 2to4 sol1 {
 }
 
 instance 2to5 {
-    nx = 6, ny = 7, scale_fac = 1, do_blocking = 0,
-    yoff_output = [3, 2], yoff_input = [3, 2, 4, 5, 6]
+    nx = 6, ny = 6, scale_fac = 2, do_blocking = 0,
+    yoff_output = [3, 4], yoff_input = [1, 2, 3, 4, 5]
 }
-solution 2to5 sol2 {
-    .vu<.>.v<u.<
-    .>S>.^vuS>.^
-    .>S>S>.>S>.>
-    .>S>S>.>S>.>
-    .>S>.vuvS>.>
-    .^..SvSvS>.>
-    .^.<.<.>S>.>
+solution 2to5 sol1 {
+    .v.<.<.<.<..
+    .v..S>>u.^u>
+    .>S>S>S>.^S>
+    S>S>.>S>S>S>
+    S>.>.>.>S>S>
+    ..........S>
 }
 
 instance 2to5_1 {
-    nx = 9, ny = 5, scale_fac = 1, do_blocking = 0,
+    nx = 9, ny = 5, scale_fac = 2, do_blocking = 0,
     yoff_output = [3, 4], yoff_input = [0, 1, 2, 3, 4]
 }
 solution 2to5_1 sol1 {
@@ -94,6 +80,20 @@ solution 2to5_1 sol1 {
     .>>u.>S>.^.^u>S>S>
     .>.>S>S>.>.^.>S>S>
     .>.>S>.>.>.>.^..S>
+}
+
+instance 2to5_2 {
+    nx = 6, ny = 7, scale_fac = 1, do_blocking = 0,
+    yoff_output = [3, 2], yoff_input = [3, 2, 4, 5, 6]
+}
+solution 2to5_2 sol1 {
+    .vu<.>.v<u.<
+    .>S>.^vuS>.^
+    .>S>S>.>S>.>
+    .>S>S>.>S>.>
+    .>S>.vuvS>.>
+    .^..SvSvS>.>
+    .^.<.<.>S>.>
 }
 
 instance 2to6 {
@@ -167,7 +167,7 @@ solution 3to3 sol1 {
 }
 
 instance 3to4 {
-    nx = 7, ny = 7, scale_fac = 1, do_blocking = 0,
+    nx = 7, ny = 7, scale_fac = 3, do_blocking = 0,
     yoff_output = [1, 2, 3], yoff_input = [1, 2, 3, 4]
 }
 solution 3to4 sol1 {
@@ -181,17 +181,17 @@ solution 3to4 sol1 {
 }
 
 instance 3to5 {
-    nx = 9, ny = 7, scale_fac = 1, do_blocking = 0,
+    nx = 9, ny = 7, scale_fac = 2, do_blocking = 0,
     yoff_output = [2, 3, 4], yoff_input = [0, 1, 2, 3, 4]
 }
 solution 3to5 sol1 {
     .v.<.<.<.v.<.>.>S>
-    .>S>>uu^.vS^S^u>S>
-    S>S>>u...>S>.^u>S>
+    .>S>>u.^.vS^S^u>S>
+    S>S>>uu^.>S>.^u>S>
     S>.>.>.>S>S>S>.>S>
     .>S>.>.>S>.vS>S>.>
     .>S>.v^u...>.>S>.v
-    .^u<.>.^....<u.<.<
+    .^u<.>.^<u.<.<.<.<
 }
 
 instance 3to6 {

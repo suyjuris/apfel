@@ -347,7 +347,7 @@ void sat_rewrite_basic(Sat_instance* inst, u64 op, Array_t<u64> args) {
         
         for (u64 lit: lits) {
             memcpy(p, context.data, context.size * sizeof(context[0]));
-            for (s64 i = 0; i < context.size; ++i) *p = ~*p;
+            for (s64 i = 0; i < context.size; ++i) p[i] = ~p[i];
             p += context.size;
             *p++ = lit;
             inst->clause_literals.size += context.size + 1;
