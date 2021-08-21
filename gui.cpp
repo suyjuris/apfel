@@ -592,6 +592,32 @@ void gui_scrollbar_set_height(Gui* gui, Array_t<u8> name, Array_t<s64> name_args
     scroll->total_height = height;
 }
 
+bool gui_scrollbar_is_at_bottom(Gui* gui, Array_t<u8> name, Array_t<s64> name_args) {
+    Scrollbar* scroll = gui_scrollbar_get(gui, name, name_args);
+    Gui::Pointable* point  = gui_pointable_get(gui, name, name_args);
+    Gui::Pointable* area  = gui_pointable_get(gui, "scrollbar_area"_arr, {(s64)point->id});
+
+    if (area->size.y >= scroll->total_height) {
+        return true;
+    } else {
+        float offset_max = scroll->total_height - area->size.y;
+        return scroll->step.value1 >= offset_max - 1.f;
+    }
+}
+
+void gui_scrollbar_move_to_bottom(Gui* gui, Array_t<u8> name, Array_t<s64> name_args) {
+    Scrollbar* scroll = gui_scrollbar_get(gui, name, name_args);
+    Gui::Pointable* point  = gui_pointable_get(gui, name, name_args);
+    Gui::Pointable* area  = gui_pointable_get(gui, "scrollbar_area"_arr, {(s64)point->id});
+    
+    if (area->size.y >= scroll->total_height) {
+        // nothing
+    } else {
+        float offset_max = scroll->total_height - area->size.y;
+        smoothstep_add(&scroll->step, offset_max - scroll->step.value1, 0.f, offset_max);
+    }
+}
+
 void gui_init(Gui* gui, Asset_store* assets, Shape_drawer* shapes, Font_data* fonts, s64 font) {
     gui->shapes = shapes;
     gui->fonts = fonts;

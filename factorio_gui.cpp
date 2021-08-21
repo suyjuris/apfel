@@ -573,6 +573,7 @@ struct Factorio_solver_state {
     Array_dyn<s32> lines;
 
     bool show_solution;
+    bool flag_new_lines;
     Sat_solution sol;
     Factorio_solution_state fsol;
 };
@@ -711,6 +712,7 @@ void factorio_solver_doinput(Factorio_solver_state* solver, Font_data* fonts, s6
             } else {
                 auto str = array_subarray(solver->output_data, last, i);
                 u32 word = font_word_create_utf8(fonts, font_line, str);
+                solver->flag_new_lines = true;
                 array_push_back(&solver->lines, word);
             }
             last = i+1;
@@ -742,8 +744,15 @@ void factorio_solver_draw(Backend* context, Factorio_solver_state* solver, Vec2 
         size.x -= p.x - pos.x;
     }
 
+    bool was_flush = gui_scrollbar_is_at_bottom(&context->gui, "solver_draw,scroll"_arr, {});
+    
     float total_height = solver->lines.size * font_sans.newline + 2*pad.y + 50;
     gui_scrollbar_set_height(&context->gui, "solver_draw,scroll"_arr, {}, total_height);
+
+    if (was_flush and solver->flag_new_lines) {
+        gui_scrollbar_move_to_bottom(&context->gui, "solver_draw,scroll"_arr, {});
+    }
+    
     gui_scrollbar(&context->gui, "solver_draw,scroll"_arr, {}, p, size, 0.f, nullptr, &p.y);
 
     p.x += pad.x;
