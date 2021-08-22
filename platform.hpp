@@ -48,6 +48,20 @@ struct Key {
         u8 general;
     };
 
+    bool operator==(Key o) const {
+        if (type != o.type) return false;
+        switch (type) {
+        case Key::NONE: return true;
+        case Key::TEXT: return strcmp((char*)text, (char*)o.text) == 0;
+        case Key::SPECIAL: return special == o.special and flags == o.flags and data == o.data;
+        case Key::MOUSE: return mouse[0] == o.mouse[0] and mouse[1] == o.mouse[1] and mouse[2] == o.mouse[2];
+        case Key::GENERAL: return general == o.general;
+        }
+        assert(false);
+        return true;
+    }
+    bool operator!=(Key o) const { return not (*this == o); }
+    
     static Key create_text(Array_t<u8> text_) {
         assert(text_.size+1 < (s64)sizeof(Key::text));
         Key result;

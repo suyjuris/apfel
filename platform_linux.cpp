@@ -40,6 +40,7 @@ struct Platform_state {
     u64 redraw_next = -1; // next redraw, in ns since t_start
     u64 frame_count = 0; // number of frames since program start
 
+    u8 redraw_fd_epoch = 0;
     Array_dyn<pollfd> redraw_fds; // We will redraw when one of these polls
     Array_dyn<pollfd> redraw_fds_result; // after the redraw, you can read the results here
     
@@ -276,10 +277,22 @@ void platform_redraw(u64 t) {
 
 s64 platform_redraw_fd(pollfd fd) {
     array_push_back(&global_platform.redraw_fds, fd);
-    return (global_platform.redraw_fds.size - 1) ^ Platform_state::MAGIC_REDRAW_FD;
+    s64 index = global_platform.redraw_fds.size - 1;
+    u64 tok = (u64)index << 8ull | global_platform.redraw_fd_epoch;
+    return tok ^ Platform_state::MAGIC_REDRAW_FD;
 }
-pollfd platform_redraw_fd_result(s64 token) {
-    return global_platform.redraw_fds_result[token ^ Platform_state::MAGIC_REDRAW_FD];
+pollfd platform_redraw_fd_result(s64 tok) {
+    tok ^= Platform_state::MAGIC_REDRAW_FD;
+    u8 epoch = tok & 0xff;
+    s64 index = (u64)tok >> 8ull;
+    if (((epoch + 1) & 0xff) == global_platform.redraw_fd_epoch) {
+        return global_platform.redraw_fds_result[index];
+    } else if (epoch == global_platform.redraw_fd_epoch) {
+        return global_platform.redraw_fds[index];
+    } else {
+        assert(false);
+        return {};
+    }
 }
 
 bool platform_key_get(Key key) {
@@ -797,6 +810,7 @@ int main(int argc, char** argv) {
                 
             simple_swap(&global_platform.redraw_fds, &global_platform.redraw_fds_result);
             global_platform.redraw_fds.size = 0;
+            ++global_platform.redraw_fd_epoch;
 
             if (code > 0) {
                 if (pfd->revents & POLLERR) {

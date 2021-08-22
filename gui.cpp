@@ -124,6 +124,8 @@ struct Gui {
     s64 pointable_scroll_diff;
     u32 clear_once_flags;
 
+    Array_dyn<Key> input_queue;
+
     Array_dyn<Scrollbar> scrollbars;
     float scrollbar_step = 50.f;
 
@@ -373,9 +375,33 @@ void gui_process_input(Gui* gui, Key i) {
                 gui->pointable_scroll_diff -= 1;
             }
         }
+    } else {
+        array_push_back(&gui->input_queue, i);
     }
 }
 
+bool gui_shortcut(Gui* gui, Key key) {
+    assert(key.type == Key::TEXT or key.type == Key::SPECIAL);
+    
+    s64 it = 0;
+    for (s64 i = 0; i < gui->input_queue.size; ++i) {
+        if (gui->input_queue[i] != key) continue;
+        
+        for (s64 j = i+1; j < gui->input_queue.size; ++j) {
+            gui->input_queue[j-1] = gui->input_queue[j];
+        }
+        --gui->input_queue.size;
+
+        return true;
+    }
+
+    return false;
+}
+
+bool gui_shortcut_special(Gui* gui, Key::Key_special special) {
+    return gui_shortcut(gui, Key::create_special(special));
+}
+    
 void gui_draw_buttonlike(Gui* gui, Vec2 p, Vec2 size, Vec2 margin, u32 flags, float z) {
     assert(gui);
     z += gui->z_level_add;
@@ -637,6 +663,8 @@ void gui_frame_draw(Gui* gui, s64 screen_w, s64 screen_h) {
     
     opengl_shader_use_and_set_origin(&gui->buttonlike, screen_w, screen_h);
     opengl_shader_draw_and_clear(&gui->buttonlike, GL_TRIANGLE_STRIP);
+
+    gui->input_queue.size = 0;
 }
 
 void gui_clear(Gui* gui) {    

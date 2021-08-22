@@ -40,6 +40,11 @@ struct Backend {
     Array_dyn<u64> temp_u64;
 };
 
+namespace Factorio_gui_state {
+    enum States: u8 {
+        INVALID, CHOOSE_PARAMS, RUN_SOLVER, DRAW_PROPAGATION, DRAW_SOLUTION, CHECK_SOLUTIONS
+    };
+}
 
 struct Factorio_solution_state {
     Sat_instance* inst;
@@ -69,7 +74,7 @@ void factorio_solution_draw_image(Backend* backend, Factorio_solution_state* dra
     s64 n_linedim = hashmap_get(&draw->inst->params, Factorio::fpar_n_linedim);
     s64 n_linelen = hashmap_get(&draw->inst->params, Factorio::fpar_n_linelen);
     
-    float center_size = max(bar_size_min.x * n_lines, bar_size_min.y * n_linelen);
+    float center_size = max(max(bar_size_min.x * n_lines, bar_size_min.y * n_linelen), 16.f);
     float size = (border_size + border_pad) * 2 + center_size;
     Vec2 bar_size = center_size / Vec2 {(float)n_lines, (float)n_linelen};
 
@@ -365,6 +370,10 @@ void factorio_solution_draw_detail(Backend* backend, Factorio_solution_state* dr
 
 void factorio_solution_draw_props(Backend* context, Factorio_solution_state* draw, Array_t<Sat_propagation> arr, Vec2 pos, Vec2 size) {
     GUI_TIMER(&context->gui);
+
+    if (gui_shortcut_special(&context->gui, Key::F4)) {
+        draw->inst->debug_explain_vars_raw ^= true;
+    }
     
     auto font_sans = font_instance_get(&context->fonts, context->font_sans);
     Vec2 posmax = pos + size;
@@ -531,6 +540,16 @@ void factorio_propagation_init(Factorio_propagation_state* prop, Factorio_params
 void factorio_propagation_draw(Backend* context, Factorio_propagation_state* prop, Vec2 pos, Vec2 size) {
     float pad = 10.f; // TODO?
 
+    if        (gui_shortcut_special(&context->gui, Key::ARROW_L)) {
+        prop->anim_frame -= prop->anim_frame > 0;
+    } else if (gui_shortcut_special(&context->gui, Key::ARROW_R)) {
+        prop->anim_frame += prop->anim_frame < prop->anim_indices.size-1;
+    } else if (gui_shortcut_special(&context->gui, Key::HOME)) {
+        prop->anim_frame = 0;
+    } else if (gui_shortcut_special(&context->gui, Key::END)) {
+        prop->anim_frame = prop->anim_indices.size-1;
+    }
+    
     sat_solution_init(&prop->sol);
     auto arr = array_subarray(prop->anim_data, 0, prop->anim_indices[prop->anim_frame]);
     for (Sat_propagation i: arr) {
@@ -663,6 +682,7 @@ void factorio_solver_doinput(Factorio_solver_state* solver, Font_data* fonts, s6
 
     if (solver->redraw_fd_token) {
         pollfd pfd = platform_redraw_fd_result(solver->redraw_fd_token);
+        solver->redraw_fd_token = 0;
         
         if (pfd.revents & POLLIN) {
             if (platform_read_all_try(solver->output_fd, &solver->output_data)) goto error;
@@ -678,8 +698,10 @@ void factorio_solver_doinput(Factorio_solver_state* solver, Font_data* fonts, s6
             fprintf(stderr, "Warning: polling returned POLLERR, I do not know how to handle this\n");
         }
     }
-    
-    solver->redraw_fd_token = platform_redraw_fd({solver->output_fd, POLLIN, 0});
+
+    if (solver->output_fd != -1) {
+        solver->redraw_fd_token = platform_redraw_fd({solver->output_fd, POLLIN, 0});
+    }
 
     {s64 last = 0;
     for (s64 i = 0; i < solver->output_data.size; ++i) {
@@ -720,6 +742,17 @@ void factorio_solver_doinput(Factorio_solver_state* solver, Font_data* fonts, s6
   error:
     platform_error_print();
     exit(11);
+}
+
+void factorio_solver_stop(Factorio_solver_state* solver) {
+    if (solver->output_fd != -1) {
+        if (platform_close_try(solver->output_fd)) {
+            platform_error_print();
+            exit(11);
+        }
+        solver->output_fd = -1;
+        solver->redraw_fd_token = 0;
+    }
 }
 
 void factorio_solver_draw(Backend* context, Factorio_solver_state* solver, Vec2 pos, Vec2 size, Vec2 pad) {
@@ -764,10 +797,7 @@ struct Factorio_params_state {
 };
 
 struct Factorio_params_result {
-    enum Actions: u8 {
-        NOTHING, DRAW_PROPAGATION, RUN_SOLVER, CHECK_SOLUTIONS
-    };
-    u8 action = NOTHING;
+    u8 action = Factorio_gui_state::INVALID;
     s64 instance = -1;
     s64 solution = -1;
 };
@@ -783,14 +813,6 @@ Factorio_params_result factorio_params_draw(Backend* context, Factorio_params_st
         float w;
         font_metrics_string_get(&context->fonts, context->font_sans, i.name, &w);
         if (name_w < w) name_w = w;
-    }
-
-    bool action_check_solutions = gui_button(
-        &context->gui, "check_solutions"_arr, {}, p + pad, "Check solutions"_arr, 0.f, nullptr, &p.y
-    );
-    if (action_check_solutions) {
-        context->redraw_internal = true;
-        return {Factorio_params_result::CHECK_SOLUTIONS};
     }
     
     bool action_draw_instance = false;
@@ -815,15 +837,23 @@ Factorio_params_result factorio_params_draw(Backend* context, Factorio_params_st
     }
 
     if (action_draw_instance) {
-        return {Factorio_params_result::DRAW_PROPAGATION, draw->current_instance, draw->current_solution};
+        return {Factorio_gui_state::DRAW_PROPAGATION, draw->current_instance, draw->current_solution};
     } else if (action_run_solver) {
-        return {Factorio_params_result::RUN_SOLVER, draw->current_instance};
+        return {Factorio_gui_state::RUN_SOLVER, draw->current_instance};
     }
 
     gui_scrollbar(&context->gui, "choose_instance,scroll"_arr, {}, p, size, 0.f, &size.x, &p.y);
     float orig_y = p.y;
-    p += pad;
     
+    bool action_check_solutions = gui_button(
+        &context->gui, "check_solutions"_arr, {}, p + pad, "Check solutions"_arr, 0.f, nullptr, &p.y
+    );
+    if (action_check_solutions) {
+        context->redraw_internal = true;
+        return {Factorio_gui_state::CHECK_SOLUTIONS};
+    }
+
+    p += pad;
     font_draw_string(&context->fonts, context->font_sans, "Choose instance:"_arr, p, Palette::BLACK, nullptr, &p.y);    
     p.y += font_sans.newline * 0.5;
     p.x += font_sans.space * 2;
@@ -924,10 +954,6 @@ Factorio_params_result factorio_params_draw(Backend* context, Factorio_params_st
     return {};
 }
 
-void factorio_solution_frame_change(Factorio_propagation_state* prop, s64 diff) {
-    prop->anim_frame = min(max(prop->anim_frame + diff, 0ll), prop->anim_indices.size-1);
-}
-
 struct Factorio_checksol_state {
     
 };
@@ -937,10 +963,7 @@ void factorio_checksol_draw(Backend* backend, Factorio_checksol_state* check, Ve
 }
 
 struct Factorio_gui {
-    enum Factorio_gui_state: u8 {
-        INVALID, CHOOSE_PARAMS, RUN_SOLVER, DRAW_PROPAGATION, DRAW_SOLUTION, CHECK_SOLUTIONS
-    };
-    u8 state = INVALID;
+    u8 state = Factorio_gui_state::INVALID;
     
     Factorio_params_state      params;
     Factorio_solution_state    solution;
@@ -954,7 +977,7 @@ void factorio_gui_init(Factorio_gui* fgui, Asset_store* assets) {
     Array_t<u8> fdb_data = asset_get(assets, "factorio_db"_arr);
     factorio_db_parse(&fgui->params.fdb, fdb_data);
 
-    fgui->state = Factorio_gui::CHOOSE_PARAMS;
+    fgui->state = Factorio_gui_state::CHOOSE_PARAMS;
 }
 
 void factorio_gui_draw(Backend* backend, Factorio_gui* fgui) {
@@ -962,40 +985,61 @@ void factorio_gui_draw(Backend* backend, Factorio_gui* fgui) {
     float pad = 10.f;
     Vec2 padd = {pad, pad};
 
-    if (fgui->state == Factorio_gui::CHOOSE_PARAMS) {
+    if (gui_shortcut_special(&backend->gui, Key::ESCAPE)) {
+        // Cleanup
+        switch (fgui->state) {
+        case Factorio_gui_state::CHOOSE_PARAMS:
+        case Factorio_gui_state::DRAW_PROPAGATION:
+        case Factorio_gui_state::DRAW_SOLUTION:
+        case Factorio_gui_state::CHECK_SOLUTIONS:
+            // nothing
+            break;
+            
+        case Factorio_gui_state::RUN_SOLVER:
+            factorio_solver_stop(&fgui->solver);
+            break;
+
+        default: assert(false);
+        }
+
+        fgui->state = Factorio_gui_state::CHOOSE_PARAMS;
+    }
+    
+    if (fgui->state == Factorio_gui_state::CHOOSE_PARAMS) {
         auto result = factorio_params_draw(backend, &fgui->params, {}, screen);
         
-        if (result.action == result.NOTHING) {
+        if (result.action == Factorio_gui_state::INVALID) {
             goto gui_was_rendered;
             
-        } else if (result.action == result.DRAW_PROPAGATION) {
+        } else if (result.action == Factorio_gui_state::DRAW_PROPAGATION) {
             Factorio_solution* sol = result.solution >= 0 ? &fgui->params.fdb.solutions[result.solution] : nullptr;
             factorio_propagation_init(&fgui->propagation, fgui->params.fdb.instances[result.instance].params, sol);
-            fgui->state = Factorio_gui::DRAW_PROPAGATION;
             
-        } else if (result.action == result.RUN_SOLVER) {
+        } else if (result.action == Factorio_gui_state::RUN_SOLVER) {
             factorio_solver_init(&fgui->solver, fgui->params.fdb.instances[result.instance].params);
-            fgui->state = Factorio_gui::RUN_SOLVER;
             
-        } else if (result.action == result.CHECK_SOLUTIONS) {
-            fgui->state = Factorio_gui::CHECK_SOLUTIONS;
+        } else if (result.action == Factorio_gui_state::CHECK_SOLUTIONS) {
+            // nothing
+            
         } else {
             assert(false);
         }
+        
+        fgui->state = result.action;
     }
-    if (fgui->state == Factorio_gui::RUN_SOLVER) {
+    if (fgui->state == Factorio_gui_state::RUN_SOLVER) {
         factorio_solver_draw(backend, &fgui->solver, {}, screen, padd);
         goto gui_was_rendered;
     }
-    if (fgui->state == Factorio_gui::DRAW_PROPAGATION) {
+    if (fgui->state == Factorio_gui_state::DRAW_PROPAGATION) {
         factorio_propagation_draw(backend, &fgui->propagation, padd, screen - 2.f * padd);
         goto gui_was_rendered;
     }
-    if (fgui->state == Factorio_gui::DRAW_SOLUTION) {
+    if (fgui->state == Factorio_gui_state::DRAW_SOLUTION) {
         factorio_solution_draw(backend, &fgui->solution, padd);
         goto gui_was_rendered;
     }
-    if (fgui->state == Factorio_gui::CHECK_SOLUTIONS) {
+    if (fgui->state == Factorio_gui_state::CHECK_SOLUTIONS) {
         factorio_checksol_draw(backend, &fgui->checksol, {}, screen);
         goto gui_was_rendered;
     }
@@ -1003,16 +1047,6 @@ void factorio_gui_draw(Backend* backend, Factorio_gui* fgui) {
     assert(false);
   gui_was_rendered:
     return;
-}
-
-Sat_instance* factorio_gui_get_instance(Factorio_gui* fgui) {
-    if (fgui->state == Factorio_gui::DRAW_PROPAGATION) {
-        return &fgui->propagation.inst;
-    } else if (fgui->state == Factorio_gui::DRAW_SOLUTION) {
-        return fgui->solution.inst;
-    } else {
-        return nullptr;
-    }
 }
 
 // Keeps the necessary data to manage OpenGL and other data for the ui layer
@@ -1085,6 +1119,7 @@ void backend_frame_draw(Backend* backend) {
     glClear(GL_DEPTH_BUFFER_BIT);
     
     shape_frame_draw(&backend->shapes, backend->screen_w, backend->screen_h);
+
     gui_frame_draw  (&backend->gui,    backend->screen_w, backend->screen_h);
 
     gui_timer(&backend->gui, "font_frame_draw"_arr);
@@ -1092,7 +1127,7 @@ void backend_frame_draw(Backend* backend) {
 }
 
 
-void backend_clear(Backend* backend) {    
+void backend_clear(Backend* backend) {
     shape_clear(&backend->shapes);
     gui_clear(&backend->gui);
     font_clear(&backend->fonts);
@@ -1108,16 +1143,7 @@ void application_render(Application* context) {
         if (i.type == Key::SPECIAL) {
             consumed = true;
             switch (i.special) {
-            case Key::ARROW_R: factorio_solution_frame_change(&fgui->propagation,  1); break;
-            case Key::ARROW_L: factorio_solution_frame_change(&fgui->propagation, -1); break;
-            case Key::END:     factorio_solution_frame_change(&fgui->propagation,  1000000); break;
-            case Key::HOME:    factorio_solution_frame_change(&fgui->propagation, -1000000); break;
-            case Key::F4:      {
-                auto* inst = factorio_gui_get_instance(fgui);
-                if (inst) inst->debug_explain_vars_raw ^= true;
-            } break;
             case Key::F5:      context->backend.gui.debug_draw_timers ^= true; break;
-            case Key::ESCAPE:  fgui->state = Factorio_gui::CHOOSE_PARAMS;   break;
             case Key::C_QUIT:  exit(0);
             default: consumed = false;
             }
@@ -1135,8 +1161,8 @@ void application_render(Application* context) {
     factorio_gui_draw(&context->backend, fgui);
     
     if (context->backend.redraw_internal) {
-        factorio_gui_draw(&context->backend, fgui);
         backend_clear(&context->backend);
+        factorio_gui_draw(&context->backend, fgui);
     }
     
     backend_frame_draw(&context->backend);
