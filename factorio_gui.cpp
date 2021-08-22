@@ -598,10 +598,7 @@ struct Factorio_solver_state {
     Factorio_solution_state fsol;
 };
 
-void factorio_solver_init(Factorio_solver_state* solver, Factorio_params p) {
-    sat_init(&solver->inst);
-    factorio_balancer(&solver->inst, p);
-
+void factorio_solver_init(Factorio_solver_state* solver) {
     sat_write_dimacs(&solver->inst, &solver->dimacs);
     
     solver->output_data.size = 0;
@@ -955,11 +952,75 @@ Factorio_params_result factorio_params_draw(Backend* context, Factorio_params_st
 }
 
 struct Factorio_checksol_state {
+    enum Results: u8 {
+        NONE = 0, PENDING, SAT, UNSAT
+    };
     
+    struct Row {
+        s64 instance, solution;
+        u8 result = 0;
+    };
+
+    Factorio_db* fdb;
+    Array_dyn<Row> rows;
 };
 
-void factorio_checksol_draw(Backend* backend, Factorio_checksol_state* check, Vec2 p, Vec2 size) {
+void factorio_checksol_init(Factorio_checksol_state* check, Factorio_db* fdb) {
+    check->fdb = fdb;
     
+    for (s64 i = 0; i < fdb->solutions.size; ++i) {
+        auto fsol = fdb->solutions[i];
+
+        s64 j;
+        for (j = 0; j < fdb->instances.size; ++j) {
+            if (array_equal(fsol.instance_name, fdb->instances[j].name)) break;
+        }
+        assert(j < fdb->instances.size);
+        array_push_back(&check->rows, {j, i});
+    }
+}
+
+void factorio_checksol_draw(Backend* backend, Factorio_checksol_state* check, Vec2 p, Vec2 size) {
+    using Row = Factorio_checksol_state::Row;
+    
+    float pad = 10.f;
+    auto font_sans = font_instance_get(&backend->fonts, backend->font_sans);
+    Array_t<u8> strings[] = {"-"_arr, "pending"_arr, "SAT"_arr, "UNSAT"_arr};
+    Color colors[] = {Palette::BLACK, Palette::BLACK, Palette::GREEN, Palette::RED};
+
+    auto* fdb = check->fdb;
+    
+    p += pad;
+    Vec2 p0 = p;
+
+    auto cell = [backend](Array_t<u8> s, Vec2* p, float* out_w, Color c = Palette::BLACK) {
+        float x;
+        font_draw_string(&backend->fonts, backend->font_sans, s, *p, c, &x, &p->y);
+        if (out_w) *out_w = max(*out_w, x - p->x);
+    };
+    
+    
+    float w0 = 0.f;
+    cell("instance"_arr, &p, &w0);
+    p.y += pad;
+    for (Row i: check->rows) cell(fdb->instances[i.instance].name, &p, &w0);
+    p.x += w0 + pad; p.y = p0.y;
+
+    float w1 = 0.f;
+    cell("solution"_arr, &p, &w1);
+    p.y += pad;
+    for (Row i: check->rows) cell(fdb->solutions[i.solution].name, &p, &w1);
+    p.x += w1 + pad; p.y = p0.y;
+    
+    float w2 = 0.f;
+    cell("result"_arr, &p, &w2);
+    p.y += pad;
+    for (Row i: check->rows) cell(strings[i.result], &p, &w2, colors[i.result]);
+    p.x += w2 + pad;
+
+    p.x = p0.x;
+
+    shape_rectangle(&backend->shapes, p0 + Vec2 {0.f, font_sans.newline + pad/2}, {w0 + w1 + w2 + 2*pad, 1.f}, Palette::BLACK);
 }
 
 struct Factorio_gui {
@@ -1016,10 +1077,13 @@ void factorio_gui_draw(Backend* backend, Factorio_gui* fgui) {
             factorio_propagation_init(&fgui->propagation, fgui->params.fdb.instances[result.instance].params, sol);
             
         } else if (result.action == Factorio_gui_state::RUN_SOLVER) {
-            factorio_solver_init(&fgui->solver, fgui->params.fdb.instances[result.instance].params);
+            sat_init(&fgui->solver.inst);
+            factorio_balancer(&fgui->solver.inst, fgui->params.fdb.instances[result.instance].params);
+
+            factorio_solver_init(&fgui->solver);
             
         } else if (result.action == Factorio_gui_state::CHECK_SOLUTIONS) {
-            // nothing
+            factorio_checksol_init(&fgui->checksol, &fgui->params.fdb);
             
         } else {
             assert(false);
