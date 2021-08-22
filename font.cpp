@@ -863,6 +863,13 @@ void font_frame_draw(Font_data* fonts, s64 screen_w, s64 screen_h) {
     opengl_shader_draw_and_clear(&fonts->blend, GL_TRIANGLE_STRIP);
 }
 
+void font_clear(Font_data* fonts) {
+    array_memset(&fonts->glyph_counts);
+    array_memset(&fonts->type_counts);
+    fonts->draw_glyphs.size = 0;
+    fonts->draw_words.size = 0;
+}
+
 
 void _convex_hull(Array_t<Vec2>* points) {
     if (points->size == 0) return;

@@ -638,3 +638,7 @@ void gui_frame_draw(Gui* gui, s64 screen_w, s64 screen_h) {
     opengl_shader_use_and_set_origin(&gui->buttonlike, screen_w, screen_h);
     opengl_shader_draw_and_clear(&gui->buttonlike, GL_TRIANGLE_STRIP);
 }
+
+void gui_clear(Gui* gui) {    
+    opengl_shader_clear(&gui->buttonlike);
+}

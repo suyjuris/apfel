@@ -184,3 +184,8 @@ void shape_frame_draw(Shape_drawer* shapes, s64 screen_w, s64 screen_h) {
     opengl_shader_draw_and_clear(&shapes->triangle, GL_TRIANGLES);
 }
 
+void shape_clear(Shape_drawer* shapes) {
+    opengl_shader_clear(&shapes->rectangle);
+    opengl_shader_clear(&shapes->circle);
+    opengl_shader_clear(&shapes->triangle);
+}

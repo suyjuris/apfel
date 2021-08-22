@@ -115,6 +115,13 @@ void key_print(Key key) {
 // platform_now. Call this with 0 to redraw at the next opportunity.
 void platform_redraw(u64 t);
 
+// Add a file descriptor which can trigger the next redraw. If it emits an event, a redraw will be
+// initiated. This procedure returns a token, which you can pass to platform_redraw_fd_result to
+// retrieve the result of poll() for that fd. It is only valid in the frame following the call
+// to platorm_redraw_fd .
+s64 platform_redraw_fd(pollfd fd);
+pollfd platform_redraw_fd_result(s64 token);
+
 // Return whether the key is currently pressed.
 bool platform_key_get(Key key);
 

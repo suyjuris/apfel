@@ -37,8 +37,8 @@ void simple_swap(T* a, T* b) {
 template <typename T> T min(T a, T b) { return a < b ? a : b; }
 template <typename T> T max(T a, T b) { return a > b ? a : b; }
 
-// Defer macro. Based on Jonathan Blow's code at https://pastebin.com/3YvWQa5c, although rewritten
-// from scratch.
+// Defer macro. The idea is based on Jonathan Blow's code at https://pastebin.com/3YvWQa5c, although
+// the code has been written from scratch.
 template <typename T>
 struct Deferrer {
     T t;

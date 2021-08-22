@@ -1,5 +1,6 @@
 
 #include "global.hpp"
+#include <poll.h>
 #include "platform.hpp"
 #include <GL/glx.h>
 #include "platform_linux_autogen.cpp"
@@ -22,6 +23,10 @@ typedef GLXContext (*glXCreateContextAttribsARB_t) (
 );
 
 struct Platform_state {
+    enum Constants: u64 {
+        MAGIC_REDRAW_FD = 0xdadfe724903e0b4aull
+    };
+    
     Display* display = nullptr;
     Window window;
     GLXWindow window_glx;
@@ -34,6 +39,9 @@ struct Platform_state {
     u64 now = 0; // ns since t_start
     u64 redraw_next = -1; // next redraw, in ns since t_start
     u64 frame_count = 0; // number of frames since program start
+
+    Array_dyn<pollfd> redraw_fds; // We will redraw when one of these polls
+    Array_dyn<pollfd> redraw_fds_result; // after the redraw, you can read the results here
     
     s64 rate = -1;
 
@@ -264,6 +272,14 @@ void linux_fullscreen(Platform_state* platform) {
 
 void platform_redraw(u64 t) {
     global_platform.redraw_next = min(global_platform.redraw_next, t);
+}
+
+s64 platform_redraw_fd(pollfd fd) {
+    array_push_back(&global_platform.redraw_fds, fd);
+    return (global_platform.redraw_fds.size - 1) ^ Platform_state::MAGIC_REDRAW_FD;
+}
+pollfd platform_redraw_fd_result(s64 token) {
+    return global_platform.redraw_fds_result[token ^ Platform_state::MAGIC_REDRAW_FD];
 }
 
 bool platform_key_get(Key key) {
@@ -766,35 +782,45 @@ int main(int argc, char** argv) {
             
             u64 wait = global_platform.redraw_next > global_platform.now
                      ? global_platform.redraw_next - global_platform.now : 0;
-            if (global_platform.redraw_next == -1) {
-                // Wait for next event
-            } else if (wait > 5000000000ull / global_platform.rate) {
-                fd_set fds;
-                FD_ZERO(&fds);
-                FD_SET(x_fd, &fds);
+            if (wait <= 5000000000ull / global_platform.rate) {
+                wait = 0;
+            }
+            
+            array_push_back(&global_platform.redraw_fds, pollfd {x_fd, POLLIN, 0});
+            auto* pfd = &global_platform.redraw_fds.back();
                 
-                timeval t;
-                t.tv_sec  = (long)(wait / 1000000000ull);
-                t.tv_usec = (long)(wait % 1000000000ull / 1000);
+            timespec t;
+            t.tv_sec  = (long)(wait / 1000000000ull);
+            t.tv_nsec = (long)(wait % 1000000000ull);
+
+            int code = ppoll(global_platform.redraw_fds.data, global_platform.redraw_fds.size, &t, nullptr);
                 
-                int num = select(x_fd+1, &fds, nullptr, nullptr, &t);
-                if (num == -1) {
-                    fprintf(stderr, "Error: while executing select()\n");
-                    perror("Error");
-                    exit(105);
-                } else if (num == 0) {
-                    // Got timeout, redraw
-                    redraw = true;
-                } else {
-                    // Check whether there is really an event there, or this is just one of select's
-                    // classic wakeup pranks.
+            simple_swap(&global_platform.redraw_fds, &global_platform.redraw_fds_result);
+            global_platform.redraw_fds.size = 0;
+
+            if (code > 0) {
+                if (pfd->revents & POLLERR) {
+                    fprintf(stderr, "Error: polling the X fd returned POLLERR, the session is terminating, I guess?\n");
+                    exit(2);
+                } else if (pfd->revents & POLLHUP) {
+                    fprintf(stderr, "Error: polling the X fd returned POLLHUP, the session is terminating, I guess?\n");
+                    exit(2);
+                } else if (pfd->revents & POLLIN) {
+                    // Check whether there is really an event there
                     if (XPending(display) <= 0) continue;
-                    
+                        
                     // An event arrived, process.
+                } else {
+                    // One of the other fds triggered, redraw
+                    redraw = true;
                 }
-            } else {
-                // Next frame is imminent, draw
+            } else if (code == 0) {
+                // Got timeout, redraw
                 redraw = true;
+            } else {
+                platform_error_printf("$ while trying to call poll");
+                platform_error_print();
+                exit(2);
             }
         }
         
