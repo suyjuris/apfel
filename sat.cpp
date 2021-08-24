@@ -88,11 +88,6 @@ void sat_decompose(u64 lit, u64* out_type=nullptr, u64* out_subtype=nullptr, u64
     if (out_suffix)  *out_suffix  = lit & Sat::MASK_SUFFIX;
 }
 
-template <typename T>
-Array_t<T> array_subindex(Array_t<s64> indices, Array_t<T> data, s64 el) {
-    return array_subarray(data, indices[el], indices[el+1]);
-}
-
 void sat_register_expand_func(Sat_instance* inst, u64 subtype, Sat_instance::Expand_func func) {
     assert((subtype & Sat::MASK_TYPE) == Sat::GROUP);
     s64 index = ((subtype - Sat::GROUP) >> 56) - 1;

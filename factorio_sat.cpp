@@ -919,7 +919,7 @@ void factorio_balancer(Sat_instance* inst, Factorio_params params) {
     arr[fpar_ny - o] = params.ny;
     arr[fpar_n_under   - o] = params.n_under;
     arr[fpar_n_linedim - o] = params.yoff_output.size;
-    arr[fpar_n_linelen - o] = params.yoff_input.size * params.scale_fac;
+    arr[fpar_n_linelen - o] = max(params.yoff_input.size, params.yoff_output.size) * params.scale_fac;
     arr[fpar_n_lines   - o] = arr[fpar_n_linedim - o] + 1 + params.do_blocking;
     arr[fpar_s_input   - o] = params.scale_fac;
     arr[fpar_s_output  - o] = arr[fpar_n_linelen - o];
@@ -998,11 +998,16 @@ struct Factorio_solution {
 };
 
 struct Factorio_db {
-    // This owns the memory inside!
+    // This modifies the memory inside!
     Array_t<u8> _parsed_text;
     Array_dyn<Factorio_instance> instances;
     Array_dyn<Factorio_solution> solutions;
 };
+
+void factorio_db_clear(Factorio_db* fdb) {
+    fdb->instances.size = 0;
+    fdb->solutions.size = 0;
+}
 
 void factorio_db_parse(Factorio_db* fdb, Array_t<u8> data) {
     fdb->_parsed_text = data;

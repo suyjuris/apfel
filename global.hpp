@@ -288,6 +288,11 @@ Array_t<T> array_subarray(Array_t<T> arr, s64 start) {
     return array_subarray(arr, start, arr.size);
 }
 
+template <typename T>
+Array_t<T> array_subindex(Array_t<s64> indices, Array_t<T> data, s64 el) {
+    return array_subarray(data, indices[el], indices[el+1]);
+}
+
 template <typename... Args>
 void array_printf(Array_dyn<u8>* arr, char const* fmt, Args... args) {
     assert(arr);

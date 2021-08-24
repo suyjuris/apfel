@@ -5,7 +5,11 @@ struct Code_location {
 };
 
 struct Asset_item {
+    enum Source_type: u8 {
+        INVALID, FILE, CODE, EXECUTABLE
+    };
     Array_t<u8> name, data;
+    u8 origin;
     Code_location location;
 };
 
@@ -76,6 +80,7 @@ bool asset_init(Asset_store* store) {
 
     array_resize(&store->assets, read_s64());
     for (auto& i: store->assets) {
+        i.origin = Asset_item::EXECUTABLE;
         i.name = array_create<u8>(read_s64());
         read(i.name.data, i.name.size);
         i.data = array_create<u8>(read_s64());
@@ -135,18 +140,18 @@ void asset_load_source(Asset_store* store, Array_t<u8> file) {
         }
         
         auto data = array_subarray(source, data_beg, data_end);
-        array_push_back(&store->assets, {name, data, {file, lineno_orig}});
+        array_push_back(&store->assets, {name, data, Asset_item::CODE, {file, lineno_orig}});
     }
 }
 
 Array_t<u8> asset_load_file(Asset_store* store, Array_t<u8> name, Array_t<u8> path) {
-    assert(not store->finalized /* no loading after finalised */);
+    assert(not store->finalized); // no loading after finalised 
     for (auto i: store->assets) {
-        assert(not array_equal(i.name, name) /* Asset already exists */);
+        assert(not array_equal(i.name, name)); // Asset already exists
     }
 
     Array_t<u8> data = array_load_from_file(path);
-    array_push_back(&store->assets, {name, data, {path, 0}});
+    array_push_back(&store->assets, {name, data, Asset_item::FILE, {path, 0}});
     return data;
 }
 
@@ -157,8 +162,30 @@ Array_t<u8> asset_get(Asset_store* store, Array_t<u8> name, Code_location* out_l
             return i.data;
         }
     }
-    assert(false /* asset not found */);
+    assert(false); // asset not found
     return {};
+}
+
+bool asset_try_reload(Asset_store* store, Array_t<u8> name) {
+    Asset_item* item = nullptr;
+    for (auto& i: store->assets) {
+        if (array_equal(i.name, name)) {
+            item = &i;
+            break;
+        }
+    }
+    assert(item);
+
+    if (item->origin != Asset_item::FILE) return false;
+
+    u64 hash = hash_str(item->data);
+    auto data_new = array_load_from_file(item->location.path);
+    if (hash_str(data_new) != hash) {
+        array_free(&item->data);
+        item->data = data_new;
+        return true;
+    }
+    return false;
 }
 
 void asset_finalize(Asset_store* store, bool do_pack) {

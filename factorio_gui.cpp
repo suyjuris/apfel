@@ -20,6 +20,7 @@
 
 #include "array_linux.cpp"
 #include "sat.cpp"
+#include "sat_linux.cpp"
 #include "factorio_sat.cpp"
 
 
@@ -74,7 +75,7 @@ void factorio_solution_draw_image(Backend* backend, Factorio_solution_state* dra
     s64 n_linedim = hashmap_get(&draw->inst->params, Factorio::fpar_n_linedim);
     s64 n_linelen = hashmap_get(&draw->inst->params, Factorio::fpar_n_linelen);
     
-    float center_size = max(max(bar_size_min.x * n_lines, bar_size_min.y * n_linelen), 16.f);
+    float center_size = max(max(bar_size_min.x * n_lines, bar_size_min.y * n_linelen), 24.f);
     float size = (border_size + border_pad) * 2 + center_size;
     Vec2 bar_size = center_size / Vec2 {(float)n_lines, (float)n_linelen};
 
@@ -584,94 +585,32 @@ void factorio_propagation_draw(Backend* context, Factorio_propagation_state* pro
 
 struct Factorio_solver_state {
     Sat_instance inst;
-    Sat_dimacs dimacs;
-    pid_t solver_pid;
-    int output_fd;
-    u64 redraw_fd_token;
-    Array_dyn<u8> output_data;
+    Sat_solver_state solver;
     Array_dyn<u32> codepoint_temp;
     Array_dyn<s32> lines;
 
+    u64 redraw_fd_token;
     bool show_solution;
     bool flag_new_lines;
-    Sat_solution sol;
     Factorio_solution_state fsol;
 };
 
 void factorio_solver_init(Factorio_solver_state* solver) {
-    sat_write_dimacs(&solver->inst, &solver->dimacs);
-    
-    solver->output_data.size = 0;
     solver->codepoint_temp.size = 0;
     solver->lines.size = 0;
+    solver->redraw_fd_token = 0;
+
+    sat_solver_init(&solver->solver, &solver->inst);
     
     solver->show_solution = false;
-    sat_solution_init(&solver->sol);
-    factorio_solution_init(&solver->fsol, &solver->inst, &solver->sol);
-
-    // TODO this can probably be removed
-    {FILE* f = fopen("dimacs.out", "w");
-    fwrite(solver->dimacs.text.data, 1, solver->dimacs.text.size, f);
-    fclose(f);}
+    factorio_solution_init(&solver->fsol, &solver->inst, &solver->solver.sol);
     
-    {Array_dyn<u8> human;
-    defer { array_free(&human); };
-    sat_write_human(&solver->inst, &human);
-    FILE* f = fopen("human.out", "w");
-    fwrite(human.data, 1, human.size, f);
-    fclose(f);}
-
-    pid_t parent_pid = getpid();
-    
-    int pipe_solver_to  [2] = {};
-    int pipe_solver_from[2] = {};
-    if (pipe(pipe_solver_to  )) goto error;
-    if (pipe(pipe_solver_from)) goto error;
-    
-    {pid_t pid = fork();
-    if (pid == 0) {
-        // Die when the parent dies (the check avoids a race condition)
-        if (prctl(PR_SET_PDEATHSIG, SIGTERM) == -1) goto error;
-        if (getppid() != parent_pid) goto error;
-        
-        if (dup2(pipe_solver_to[0],   STDIN_FILENO)  == -1) goto error;
-        if (dup2(pipe_solver_from[1], STDOUT_FILENO) == -1) goto error;
-        if (dup2(pipe_solver_from[1], STDERR_FILENO) == -1) goto error;
-        if (platform_close_try(pipe_solver_to[1])) goto error;
-        if (platform_close_try(pipe_solver_from[0])) goto error;
-        
-        {char* argv[] = {"kissat", nullptr};
-        execvp("kissat", argv);
-        platform_error_printf("$ while trying to execute solver in child");
-        platform_error_print();
-        exit(12);}
-    } else if (pid != -1) {
-        solver->solver_pid = pid;
-        solver->output_fd = pipe_solver_from[0];
-        solver->redraw_fd_token = 0;
-        
-        if (platform_read_all_try(solver->output_fd, &solver->output_data)) goto error2;
-        if (platform_write_try(pipe_solver_to[1], solver->dimacs.text)) goto error2;
-        if (platform_close_try(pipe_solver_to[1])) goto error2;
-        if (platform_close_try(pipe_solver_from[1])) goto error2;
-    } else {
-        goto error3;
-    }}
-
-    return;
-
-  error:
-    platform_error_printf("$ while initialising child");
-    platform_error_print();
-    exit(8);
-  error2:
-    platform_error_printf("$ while talking to the child");
-    platform_error_print();
-    exit(9);
-  error3:
-    platform_error_printf("$ while trying to fork");
-    platform_error_print();
-    exit(15);
+    //{Array_dyn<u8> human;
+    //defer { array_free(&human); };
+    //sat_write_human(&solver->inst, &human);
+    //FILE* f = fopen("human.out", "w");
+    //fwrite(human.data, 1, human.size, f);
+    //fclose(f);}
 }
 
 void factorio_solver_doinput(Factorio_solver_state* solver, Font_data* fonts, s64 font_line, Gui* gui) {
@@ -680,74 +619,41 @@ void factorio_solver_doinput(Factorio_solver_state* solver, Font_data* fonts, s6
     if (solver->redraw_fd_token) {
         pollfd pfd = platform_redraw_fd_result(solver->redraw_fd_token);
         solver->redraw_fd_token = 0;
-        
-        if (pfd.revents & POLLIN) {
-            if (platform_read_all_try(solver->output_fd, &solver->output_data)) goto error;
-        }
-        if (pfd.revents & POLLHUP) {
-            if (platform_close_try(solver->output_fd)) goto error;
-            if (solver->output_data.size and solver->output_data.back() != '\n') {
-                array_push_back(&solver->output_data, '\n');
-            }
-            solver->output_fd = -1;
-        }
-        if (pfd.revents & POLLERR) {
-            fprintf(stderr, "Warning: polling returned POLLERR, I do not know how to handle this\n");
-        }
+        sat_solver_process(&solver->solver, pfd);
     }
 
-    if (solver->output_fd != -1) {
-        solver->redraw_fd_token = platform_redraw_fd({solver->output_fd, POLLIN, 0});
+    if (solver->solver.output_fd != -1) {
+        solver->redraw_fd_token = platform_redraw_fd({solver->solver.output_fd, POLLIN, 0});
     }
 
-    {s64 last = 0;
-    for (s64 i = 0; i < solver->output_data.size; ++i) {
-        if (solver->output_data[i] == '\n') {
-            if (solver->output_data[last] == 'v') {
-                s64 val = 0;
-                bool isneg = false;
-                for (s64 j = last+2; j <= i; ++j) {
-                    u8 c = j < i ? solver->output_data[j] : ' ';
-                    if (c == '-') {
-                        isneg ^= true;
-                    } else if ('0' <= c and c <= '9') {
-                        val = 10 * val + (c - '0');
-                    } else if (c == ' ') {
-                        if (val) {
-                            u64 var = solver->dimacs.map_back[val];
-                            solver->show_solution = true;
-                            solver->sol.set(isneg ? ~var : var);
-                            val = 0; isneg = false;
-                        }
-                    }
-                }
-            } else {
-                auto str = array_subarray(solver->output_data, last, i);
-                u32 word = font_word_create_utf8(fonts, font_line, str);
-                solver->flag_new_lines = true;
-                array_push_back(&solver->lines, word);
-            }
-            last = i+1;
-        }
+    for (s64 i = 0; i+1 < solver->solver.output_lines.size; ++i) {
+        auto line = array_subindex(solver->solver.output_lines, solver->solver.output_data, i);
+        if (line.size < 3) continue;
+        auto str = array_subarray(line, 2, line.size - 1);
+        u32 word = font_word_create_utf8(fonts, font_line, str);
+        solver->flag_new_lines = true;
+        array_push_back(&solver->lines, word);        
     }
-    if (0 < last and last < solver->output_data.size) {
-        memmove(&solver->output_data[0], &solver->output_data[last], solver->output_data.size - last);
+
+    s64 last = solver->solver.output_lines.back();
+    if (0 < last and last < solver->solver.output_data.size) {
+        memmove(&solver->solver.output_data[0], &solver->solver.output_data[last], solver->solver.output_data.size - last);
     }
-    solver->output_data.size -= last;}
-    
-    return;
-  error:
-    platform_error_print();
-    exit(11);
+    solver->solver.output_data.size -= last;
+    solver->solver.output_lines.size = 1;
+
+    if (solver->solver.state == Sat_solver_state::SAT) {
+        solver->show_solution = true;
+    }
 }
 
 void factorio_solver_stop(Factorio_solver_state* solver) {
-    if (solver->output_fd != -1) {
-        if (platform_close_try(solver->output_fd)) {
+    if (solver->solver.output_fd != -1) {
+        if (platform_close_try(solver->solver.output_fd)) {
             platform_error_print();
             exit(11);
         }
-        solver->output_fd = -1;
+        solver->solver.output_fd = -1;
         solver->redraw_fd_token = 0;
     }
 }
@@ -755,7 +661,7 @@ void factorio_solver_stop(Factorio_solver_state* solver) {
 void factorio_solver_draw(Backend* context, Factorio_solver_state* solver, Vec2 pos, Vec2 size, Vec2 pad) {
     GUI_TIMER(&context->gui);
 
-    if (solver->output_fd != -1) {
+    if (solver->solver.output_fd != -1) {
         factorio_solver_doinput(solver, &context->fonts, context->font_sans, &context->gui);
     }
     auto font_sans = font_instance_get(&context->fonts, context->font_sans);
@@ -963,10 +869,17 @@ struct Factorio_checksol_state {
 
     Factorio_db* fdb;
     Array_dyn<Row> rows;
+
+    Sat_instance inst;
+    s64 cur_row;
+
+    Sat_solver_state solver;
+    s64 redraw_fd_token = 0;
 };
 
 void factorio_checksol_init(Factorio_checksol_state* check, Factorio_db* fdb) {
     check->fdb = fdb;
+    check->rows.size = 0;
     
     for (s64 i = 0; i < fdb->solutions.size; ++i) {
         auto fsol = fdb->solutions[i];
@@ -977,6 +890,48 @@ void factorio_checksol_init(Factorio_checksol_state* check, Factorio_db* fdb) {
         }
         assert(j < fdb->instances.size);
         array_push_back(&check->rows, {j, i});
+    }
+
+    check->cur_row = 0;
+    check->redraw_fd_token = 0;
+}
+
+void factorio_checksol_doinput(Factorio_checksol_state* check) {
+    while (check->cur_row < check->rows.size) {
+        auto* row = &check->rows[check->cur_row];
+        
+        if (row->result == Factorio_checksol_state::NONE) {
+            sat_init(&check->inst);
+            factorio_balancer(&check->inst, check->fdb->instances[row->instance].params);
+            factorio_clauses_from_diagram(&check->inst, check->fdb->solutions[row->solution].ascii_diagram);
+
+            sat_solver_init(&check->solver, &check->inst);
+            row->result = Factorio_checksol_state::PENDING;
+        }
+        if (row->result == Factorio_checksol_state::PENDING) {
+            if (check->redraw_fd_token) {
+                pollfd pfd = platform_redraw_fd_result(check->redraw_fd_token);
+                check->redraw_fd_token = 0;
+                sat_solver_process(&check->solver, pfd);
+            }
+            
+            if (check->solver.state == Sat_solver_state::RUNNING) {
+                check->redraw_fd_token = platform_redraw_fd({check->solver.output_fd, POLLIN, 0});
+            }
+            if (check->solver.state == Sat_solver_state::SAT) {
+                row->result = Factorio_checksol_state::SAT;
+                ++check->cur_row;
+                continue;
+            } else if (check->solver.state == Sat_solver_state::UNSAT) {
+                row->result = Factorio_checksol_state::UNSAT;
+                ++check->cur_row;
+                continue;
+            } else {
+                break;
+            }
+
+            assert(false);
+        }
     }
 }
 
@@ -1023,6 +978,12 @@ void factorio_checksol_draw(Backend* backend, Factorio_checksol_state* check, Ve
     shape_rectangle(&backend->shapes, p0 + Vec2 {0.f, font_sans.newline + pad/2}, {w0 + w1 + w2 + 2*pad, 1.f}, Palette::BLACK);
 }
 
+void factorio_checksol_update(Backend* backend, Factorio_checksol_state* check, Vec2 p, Vec2 size) {
+    factorio_checksol_doinput(check);
+    factorio_checksol_draw(backend, check, p, size);
+}
+
+
 struct Factorio_gui {
     u8 state = Factorio_gui_state::INVALID;
     
@@ -1041,29 +1002,43 @@ void factorio_gui_init(Factorio_gui* fgui, Asset_store* assets) {
     fgui->state = Factorio_gui_state::CHOOSE_PARAMS;
 }
 
+void factorio_gui_reset(Factorio_gui* fgui) {
+    // Cleanup
+    switch (fgui->state) {
+    case Factorio_gui_state::CHOOSE_PARAMS:
+    case Factorio_gui_state::DRAW_PROPAGATION:
+    case Factorio_gui_state::DRAW_SOLUTION:
+    case Factorio_gui_state::CHECK_SOLUTIONS:
+        // nothing
+        break;
+            
+    case Factorio_gui_state::RUN_SOLVER:
+        factorio_solver_stop(&fgui->solver);
+        break;
+
+    default: assert(false);
+    }
+
+    fgui->state = Factorio_gui_state::CHOOSE_PARAMS;
+}
+
+void factorio_gui_reload(Factorio_gui* fgui, Asset_store* assets) {
+    if (asset_try_reload(assets, "factorio_db"_arr)) {
+        factorio_gui_reset(fgui);
+
+        factorio_db_clear(&fgui->params.fdb);
+        Array_t<u8> fdb_data = asset_get(assets, "factorio_db"_arr);
+        factorio_db_parse(&fgui->params.fdb, fdb_data);
+    }
+}
+
 void factorio_gui_draw(Backend* backend, Factorio_gui* fgui) {
     Vec2 screen {(float)backend->screen_w, (float)backend->screen_h};
     float pad = 10.f;
     Vec2 padd = {pad, pad};
 
     if (gui_shortcut_special(&backend->gui, Key::ESCAPE)) {
-        // Cleanup
-        switch (fgui->state) {
-        case Factorio_gui_state::CHOOSE_PARAMS:
-        case Factorio_gui_state::DRAW_PROPAGATION:
-        case Factorio_gui_state::DRAW_SOLUTION:
-        case Factorio_gui_state::CHECK_SOLUTIONS:
-            // nothing
-            break;
-            
-        case Factorio_gui_state::RUN_SOLVER:
-            factorio_solver_stop(&fgui->solver);
-            break;
-
-        default: assert(false);
-        }
-
-        fgui->state = Factorio_gui_state::CHOOSE_PARAMS;
+        factorio_gui_reset(fgui);
     }
     
     if (fgui->state == Factorio_gui_state::CHOOSE_PARAMS) {
@@ -1104,7 +1079,7 @@ void factorio_gui_draw(Backend* backend, Factorio_gui* fgui) {
         goto gui_was_rendered;
     }
     if (fgui->state == Factorio_gui_state::CHECK_SOLUTIONS) {
-        factorio_checksol_draw(backend, &fgui->checksol, {}, screen);
+        factorio_checksol_update(backend, &fgui->checksol, {}, screen);
         goto gui_was_rendered;
     }
 
@@ -1207,7 +1182,8 @@ void application_render(Application* context) {
         if (i.type == Key::SPECIAL) {
             consumed = true;
             switch (i.special) {
-            case Key::F5:      context->backend.gui.debug_draw_timers ^= true; break;
+            case Key::F5:      factorio_gui_reload(fgui, &context->assets); break;
+            case Key::F8:      context->backend.gui.debug_draw_timers ^= true; break;
             case Key::C_QUIT:  exit(0);
             default: consumed = false;
             }

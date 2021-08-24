@@ -40,7 +40,6 @@ struct Platform_state {
     u64 redraw_next = -1; // next redraw, in ns since t_start
     u64 frame_count = 0; // number of frames since program start
 
-    u8 redraw_fd_epoch = 0;
     Array_dyn<pollfd> redraw_fds; // We will redraw when one of these polls
     Array_dyn<pollfd> redraw_fds_result; // after the redraw, you can read the results here
     
@@ -278,16 +277,16 @@ void platform_redraw(u64 t) {
 s64 platform_redraw_fd(pollfd fd) {
     array_push_back(&global_platform.redraw_fds, fd);
     s64 index = global_platform.redraw_fds.size - 1;
-    u64 tok = (u64)index << 8ull | global_platform.redraw_fd_epoch;
+    u64 tok = (u64)index << 8ull | (global_platform.frame_count & 0xff);
     return tok ^ Platform_state::MAGIC_REDRAW_FD;
 }
 pollfd platform_redraw_fd_result(s64 tok) {
     tok ^= Platform_state::MAGIC_REDRAW_FD;
     u8 epoch = tok & 0xff;
     s64 index = (u64)tok >> 8ull;
-    if (((epoch + 1) & 0xff) == global_platform.redraw_fd_epoch) {
+    if (((epoch + 1) & 0xff) == (global_platform.frame_count & 0xff)) {
         return global_platform.redraw_fds_result[index];
-    } else if (epoch == global_platform.redraw_fd_epoch) {
+    } else if (epoch == (global_platform.frame_count & 0xff)) {
         return global_platform.redraw_fds[index];
     } else {
         assert(false);
@@ -800,26 +799,23 @@ int main(int argc, char** argv) {
             }
             
             array_push_back(&global_platform.redraw_fds, pollfd {x_fd, POLLIN, 0});
-            auto* pfd = &global_platform.redraw_fds.back();
                 
             timespec t;
             t.tv_sec  = (long)(wait / 1000000000ull);
             t.tv_nsec = (long)(wait % 1000000000ull);
 
             int code = ppoll(global_platform.redraw_fds.data, global_platform.redraw_fds.size, &t, nullptr);
+            auto pfd = global_platform.redraw_fds.back();
+            --global_platform.redraw_fds.size;
                 
-            simple_swap(&global_platform.redraw_fds, &global_platform.redraw_fds_result);
-            global_platform.redraw_fds.size = 0;
-            ++global_platform.redraw_fd_epoch;
-
             if (code > 0) {
-                if (pfd->revents & POLLERR) {
+                if (pfd.revents & POLLERR) {
                     fprintf(stderr, "Error: polling the X fd returned POLLERR, the session is terminating, I guess?\n");
                     exit(2);
-                } else if (pfd->revents & POLLHUP) {
+                } else if (pfd.revents & POLLHUP) {
                     fprintf(stderr, "Error: polling the X fd returned POLLHUP, the session is terminating, I guess?\n");
                     exit(2);
-                } else if (pfd->revents & POLLIN) {
+                } else if (pfd.revents & POLLIN) {
                     // Check whether there is really an event there
                     if (XPending(display) <= 0) continue;
                         
@@ -839,6 +835,9 @@ int main(int argc, char** argv) {
         }
         
         if (redraw) {
+            simple_swap(&global_platform.redraw_fds, &global_platform.redraw_fds_result);
+            global_platform.redraw_fds.size = 0;
+            
             global_platform.now = platform_now_real();
             global_platform.redraw_next = -1;
             global_platform.keys_dirty = true;
