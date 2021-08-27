@@ -27,13 +27,16 @@ enum Constraints_factorio: u64 {
     line_equal,
     lines_equal,
     lines_equal_half,
+    line_cyclic_bipart,
+    line_is_fraction,
+    lines_are_fraction,
 };
 
 enum Params_factorio: u64 {
     PARAM_FACTORIO_BEGIN = PARAM_FACTORIO,
     fpar_nx, fpar_ny, fpar_n_under,
     fpar_n_lines, fpar_n_linelen, fpar_n_linedim,
-    fpar_do_block,
+    fpar_do_blocking,
     fpar_s_input, fpar_s_output,
     PARAM_FACTORIO_END
 };
@@ -52,7 +55,7 @@ struct Dir {
     
     s64 x, y; u8 dir;
     u64 inp, out, sid, und;
-    u64 sum_lines_all, sum_lines_item, sum_line_sum, sum_line_block;
+    u64 sum_lines_all, sum_lines_item, sum_line_sum, sum_line_block, sum_line_first, sum_lines_most;
 
     Dir() = default;
     Dir(s64 x, s64 y, u8 dir);
@@ -94,6 +97,7 @@ struct Field {
         FVAR_MOD_MASK = 0xfull << 16,
         FVAR_SUMX     = 0x1ull << 16,
         FVAR_SUMY     = 0x2ull << 16,
+        FVAR_CYCLE    = 0x3ull << 16,
     };
     enum Field_border_type: u8 {
         BORDER_EMPTY, BORDER_OUT, BORDER_INP
@@ -104,6 +108,8 @@ struct Field {
     u64 split, splitl, splitr;
     u64 under, underh, underv;
     u64 lines_all, lines_item, line_first, line_sum, line_block;
+    u64 lines_most; // everything but line_block
+    u64 line_cyclic;
 
     Dir dirs[4];
     Dir dir_all;
@@ -132,11 +138,13 @@ void factorio_field_init_base(Field* f) {
     f->under  = base+ ++i; f->underh = base+ ++i; f->underv = base+ ++i;}
     
     {u64 base = base_orig | Factorio::GROUP_FACTORIO | Field::FVAR_LINEGROUP;
-    f->lines_all  = base+ ++i; f->lines_item = base+ ++i;}
+    f->lines_all  = base+ ++i; f->lines_item = base+ ++i; f->lines_most = base+ ++i;}
     
     {u64 base = base_orig | Factorio::GROUP_FACTORIO | Field::FVAR_LINE;
-    f->line_first = base;
-    f->line_sum   = base | 0xfe00; f->line_block = base | 0xff00;}
+    f->line_first  = base;
+    f->line_sum    = base | 0xfe00;
+    f->line_block  = base | 0xff00;
+    f->line_cyclic = base | 0xfd00 | Field::FVAR_CYCLE;}
 }
 
 Field::Field(s64 x, s64 y): x{x}, y{y} {
@@ -180,6 +188,8 @@ Dir::Dir(s64 x, s64 y, u8 dir): x{x}, y{y}, dir{dir} {
         sum_lines_item = f2->lines_item | Field::FVAR_SUMY;
         sum_line_sum   = f2->line_sum   | Field::FVAR_SUMY;
         sum_line_block = f2->line_block | Field::FVAR_SUMY;
+        sum_line_first = f2->line_first | Field::FVAR_SUMY;
+        sum_lines_most = f2->lines_most | Field::FVAR_SUMY;
     } else if (dir == Dir::LEFT or dir == Dir::RIGHT) {
         und = f->underh;
         f2->x = x+d; f2->y = y;
@@ -188,12 +198,16 @@ Dir::Dir(s64 x, s64 y, u8 dir): x{x}, y{y}, dir{dir} {
         sum_lines_item = f2->lines_item | Field::FVAR_SUMX;
         sum_line_sum   = f2->line_sum   | Field::FVAR_SUMX;
         sum_line_block = f2->line_block | Field::FVAR_SUMX;
+        sum_line_first = f2->line_first | Field::FVAR_SUMX;
+        sum_lines_most = f2->lines_most | Field::FVAR_SUMX;
     } else {
         und = 0;
         sum_lines_all  = 0;
         sum_lines_item = 0;
         sum_line_sum   = 0;
         sum_line_block = 0;
+        sum_line_first = 0;
+        sum_lines_most = 0;
     }
 
 }
@@ -215,7 +229,7 @@ void factorio_expand(Sat_instance* inst, u64 ovar, Array_dyn<u64>* out_lits) {
     u64 var   = ovar & ~Field::FVAR_TYPE_MASK;
     if (ftype == Field::FVAR_LINEGROUP) {
         s64 n_linedim = hashmap_get(&inst->params, Factorio::fpar_n_linedim);
-        bool do_block = hashmap_get(&inst->params, Factorio::fpar_do_block);
+        bool do_blocking = hashmap_get(&inst->params, Factorio::fpar_do_blocking);
         
         u64 mod = var & Field::FVAR_MOD_MASK;
         assert(mod == 0 or mod == Field::FVAR_SUMX or mod == Field::FVAR_SUMY);
@@ -229,7 +243,9 @@ void factorio_expand(Sat_instance* inst, u64 ovar, Array_dyn<u64>* out_lits) {
 
             if ((ovar^mod) == f.lines_all) {
                 array_push_back(out_lits, f.line_sum | mod);
-                if (do_block) array_push_back(out_lits, f.line_block | mod);
+                if (do_blocking) array_push_back(out_lits, f.line_block | mod);
+            } else if ((ovar^mod) == f.lines_most) {
+                array_push_back(out_lits, f.line_sum | mod);
             } else {
                 assert((ovar^mod) == f.lines_item);
             }
@@ -239,17 +255,18 @@ void factorio_expand(Sat_instance* inst, u64 ovar, Array_dyn<u64>* out_lits) {
                 array_push_back(out_lits, Factorio::line_empty);
             }
             array_push_back(out_lits, Factorio::line_empty);
-            if (do_block) array_push_back(out_lits, Factorio::line_full);
+            if (do_blocking) array_push_back(out_lits, Factorio::line_full);
         }
     } else if (ftype == Field::FVAR_LINE) {
         s64 len = hashmap_get(&inst->params, Factorio::fpar_n_linelen);
         switch (var & Field::FVAR_MOD_MASK) {
         case 0: break;
+        case Field::FVAR_CYCLE:
         case Field::FVAR_SUMY:
         case Field::FVAR_SUMX: len *= 2; break;
         default: assert(false);
         }
-        
+
         if (var & Field::COORD_MASK) {
             u64 vvar = (var & ~Sat::MASK_SUBTYPE) | Factorio::VAR_FACTORIO | Field::FVAR_LINEEL;
             for (s64 i = 0; i < len; ++i) {
@@ -448,6 +465,34 @@ void factorio_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
                 if (dobreak) break;
             }
 
+            // The above is only for outputs, for inputs we only force a matching output tile to
+            // exist. (Else unconnected inputs would be possible.)
+            s64 index = inst->rewrite_temp.size;
+            for (s64 w = 2; w < n_under+1; ++w) {
+                Dir fd2 = fd.move(0, w-1);
+                Field f2 {fd2};
+                if (not f2.inbounds(inst)) break;
+                array_push_back(&inst->rewrite_temp, fd2.und);
+            }
+            sat_addg(inst, implies, {f.under, fd.back().inp}, array_subarray(inst->rewrite_temp, index));
+
+            // Still, it is possible that two input underground belts face each other. Forbid this as well.
+            // Search for matching underground
+            for (s64 w = 2; w < n_under+1; ++w) {
+                // see above
+                Dir fd2 = fd.move(0, w-1);
+                Field f2 {fd2};
+                if (not f2.inbounds(inst)) break;
+
+                sat_push(inst, {f.under, fd.back().inp});
+                for (s64 i = 1; i < w-1; ++i) {
+                    sat_push_amend(inst, ~fd.move(0, i).und);
+                }
+                sat_push_amend(inst, fd2.und);
+                sat_add(inst, clause, {fd2.out});
+                sat_pop(inst);
+            }
+            
             // @Redundant Forbid unused space after underground
             sat_addg(inst, implies, {f.under, fd.back().out, Field {fd.move()}.empty},
                 {fd.move(-1, 1).turnr().out, fd.move(1, 1).turnl().out});
@@ -492,7 +537,7 @@ void factorio_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
             sat_add(inst, sub_op, {arr0[i], arr1[i]});
         }
     } break;
-        
+
     case line_equal:
     case line_at_most:
     case line_equal_half: {
@@ -546,7 +591,7 @@ void factorio_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
     case field_unary: {
         assert(args.size == 2);
         Field f {(s64)args[0], (s64)args[1]};
-        bool do_block = hashmap_get(&inst->params, Factorio::fpar_do_block);
+        bool do_blocking = hashmap_get(&inst->params, Factorio::fpar_do_blocking);
         
         // TODO do not fix sum for each field, just carry it around
         
@@ -591,9 +636,13 @@ void factorio_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
             }
         }
 
-        if (do_block) {
+        if (do_blocking) {
             // Total count determined also determined by blocking info
             sat_add(inst, line_at_most, {f.line_sum, f.line_block});
+
+            // line_cyclic should be a cyclic bipartition
+            // IDEA: make this conditional on the field being a splitter
+            sat_add(inst, line_cyclic_bipart, {f.line_cyclic});
         }
 
         // Line control for splitters
@@ -605,35 +654,52 @@ void factorio_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
             Dir fdr  = fd.turnr();
             Dir fdro = fd.move().turnr();
 
-            // Determine whether the sum of inputs equals ...
+            // These state which output is occupied
             u64 eq_0    = sat_temp_create(inst, 1);
             u64 eq_1    = sat_temp_create(inst, 1);
             u64 eq_both = sat_temp_create(inst, 1);
 
+            // Determine whether the sum of inputs equals ...
             // ... the first output
-            sat_push_add_pop(inst, {eq_0}, lines_equal, {fdr.sum_lines_all, fo0.lines_all});
+            sat_push_add_pop(inst, {eq_0}, lines_equal, {fdr.sum_lines_most, fo0.lines_most});
+            sat_push_add_pop(inst, {eq_0}, line_equal_half, {f0.line_block, fo0.line_block});
+            sat_push_add_pop(inst, {eq_0}, line_equal_half, {f1.line_block, fo0.line_block});
             // ... the second output
-            sat_push_add_pop(inst, {eq_1}, lines_equal, {fdr.sum_lines_all, fo1.lines_all});
+            sat_push_add_pop(inst, {eq_1}, lines_equal, {fdr.sum_lines_most, fo1.lines_most});
+            sat_push_add_pop(inst, {eq_1}, line_equal_half, {f0.line_block, fo1.line_block});
+            sat_push_add_pop(inst, {eq_1}, line_equal_half, {f1.line_block, fo1.line_block});
 
-            if (do_block) {
-                // ... the sum of both outputs
-                sat_push_add_pop(inst, {eq_both}, lines_equal, {fdr.sum_lines_all, fdro.sum_lines_all});
+            sat_push(inst, {eq_both});
+            if (not do_blocking) {
+                // ... and whether each output is the average of the inputs
+                sat_add(inst, lines_equal_half, {fo0.lines_all, fdr.sum_lines_all});
+                sat_add(inst, lines_equal_half, {fo1.lines_all, fdr.sum_lines_all});
             } else {
-                // Or whether each output is the average of the inputs
-                sat_push_add_pop(inst, {eq_both}, lines_equal_half, {fo0.lines_all, fdr.sum_lines_all});
-                sat_push_add_pop(inst, {eq_both}, lines_equal_half, {fo1.lines_all, fdr.sum_lines_all});
+                // ... or that both outputs are a fraction of the input.
+                sat_add(inst, lines_are_fraction, {fdr.sum_lines_item, f0.line_cyclic, fo0.lines_item});
+                sat_add(inst, lines_are_fraction, {fdr.sum_lines_item, ~f0.line_cyclic, fo1.lines_item});
+                
+                // The outputs are blocked or equal
+                u64 block0 = sat_temp_create(inst, 1);
+                u64 block1 = sat_temp_create(inst, 1);
+                sat_push_add_pop(inst, {~block0, ~block1}, lines_equal, {fo0.lines_most, fo1.lines_most});
+                sat_push_add_pop(inst, {block0}, line_equal, {fo0.line_sum, fo0.line_block});
+                sat_push_add_pop(inst, {block1}, line_equal, {fo1.line_sum, fo1.line_block});
+
+                // Inputs are blocked at half the average rate the outputs
+                sat_add(inst, line_equal_half, {f0.line_block, fdro.sum_line_block});
+                sat_add(inst, line_equal_half, {f1.line_block, fdro.sum_line_block});
             }
+            sat_pop(inst);
             
             // If the other side would be out-of-bounds, no need to emit anything
             if (not f1.inbounds(inst)) continue;
             
             sat_push(inst, {f0.splitl, fd.out});
 
-            if (do_block) {
+            if (do_blocking) {
                 // Check that both inputs block at the same rate
-                sat_add(inst, lines_equal, {f0.line_block, f1.line_block});
-
-                // TODO Check that the outputs are either equal, or blocked
+                sat_add(inst, line_equal, {f0.line_block, f1.line_block});
             }
 
             // Assert eq_0, eq_1 or eq_both depending on the combination of outputs that are occupied
@@ -641,6 +707,9 @@ void factorio_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
             sat_addg(inst, implies, {~fd.move().back().inp,  fd.move(1, 1).back().inp}, {eq_1});
             sat_addg(inst, implies, { fd.move().back().inp,  fd.move(1, 1).back().inp}, {eq_both});
 
+            // Do not output onto the side of a belt
+            sat_add(inst, clause, {~fd.move().back().sid});
+            sat_add(inst, clause, {~fd.move(1, 1).back().sid});
             
             sat_pop(inst);
         }
@@ -649,7 +718,7 @@ void factorio_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
     case field_border_unary: {
         Field f {(s64)args[0], (s64)args[1]};
         u8 border_type = args[2];
-        bool do_block = hashmap_get(&inst->params, Factorio::fpar_do_block);
+        bool do_blocking = hashmap_get(&inst->params, Factorio::fpar_do_blocking);
         s64 nx        = hashmap_get(&inst->params, Factorio::fpar_nx);
         s64 ny        = hashmap_get(&inst->params, Factorio::fpar_ny);
         s64 s_input   = hashmap_get(&inst->params, Factorio::fpar_s_input);
@@ -702,6 +771,71 @@ void factorio_rewrite(Sat_instance* inst, u64 op, Array_t<u64> args) {
         }
 
     } break;
+
+    case line_cyclic_bipart: {
+        assert(args.size == 1);
+        assert((args[0] & Field::FVAR_TYPE_MASK) == Field::FVAR_LINE);
+        Array_t<u64> arr = sat_expand(inst, {args[0]}, &inst->rewrite_temp);
+        assert(arr.size);
+
+        sat_add(inst, clause, {arr[0]});
+        for (s64 i = 2; i < arr.size; ++i) {
+            sat_push(inst, {~arr[i-1], arr[i]});
+            for (s64 j = i+1; j < arr.size; ++j) {
+                sat_add(inst, equivalent, {arr[j-i], arr[j]});
+            }
+            sat_pop(inst);
+        }
+    } break;
+
+    case lines_are_fraction: {
+        assert((args[0] & Field::FVAR_TYPE_MASK) == Field::FVAR_LINEGROUP);
+        assert(((args[1] ^ -(args[1] >> 63)) & Field::FVAR_TYPE_MASK) == Field::FVAR_LINE);
+        assert((args[2] & Field::FVAR_TYPE_MASK) == Field::FVAR_LINEGROUP);
+        
+        Array_t<u64> arr0 = sat_expand(inst, {args[0]}, &inst->rewrite_temp);
+        Array_t<u64> arr2 = sat_expand(inst, {args[2]}, &inst->rewrite_temp);
+        assert(arr0.size == arr2.size);
+        
+        for (s64 i = 0; i < arr0.size; ++i) {
+            sat_add(inst, line_is_fraction, {arr0[i], args[1], arr2[i]});
+        }
+    } break;
+
+    case line_is_fraction: {
+        assert(args.size == 3);
+        assert((args[0] & Field::FVAR_TYPE_MASK) == Field::FVAR_LINE);
+        u64 mask = -(args[1] >> 63);
+        assert(((args[1] ^ mask) & Field::FVAR_TYPE_MASK) == Field::FVAR_LINE);
+        assert((args[2] & Field::FVAR_TYPE_MASK) == Field::FVAR_LINE);
+
+        Array_t<u64> source = sat_expand(inst, {args[0]}, &inst->rewrite_temp);
+        Array_t<u64> cycle  = sat_expand(inst, {args[1]}, &inst->rewrite_temp);
+        u64 target_group = args[2];
+
+        s64 size = source.size;
+        assert(size == cycle.size);
+        
+        u64 temp = sat_temp_group_create(inst, size);
+        Array_t<u64> temp_arr  = sat_expand(inst, {temp}, &inst->rewrite_temp);
+
+        // temp contains the filtered items from source
+        for (s64 i = 0; i < size; ++i) {
+            sat_addg(inst, implies, {source[i], cycle[i]}, {temp_arr[i]});
+            sat_add(inst, implies, {temp_arr[i], source[i]});
+            sat_add(inst, implies, {temp_arr[i], cycle[i]});
+        }
+
+        // source is a multiple of the cycle length of cycle
+        for (s64 i = 0; i+1 < size; ++i) {
+            sat_addg(inst, implies, {source[i], ~source[i+1]}, {~cycle[i]^mask});
+            sat_addg(inst, implies, {source[i], ~source[i+1]}, {cycle[i+1]^mask});
+        }
+
+        // target contains the sorted bits from temp
+        sat_add(inst, merge_multi, {temp, target_group});
+    } break;
+        
         
     default:
         assert(false);
@@ -758,6 +892,8 @@ bool factorio_explain(Sat_instance* inst, u64 id, Array_t<u64> args, Array_dyn<u
                     array_printf(into, "sum");
                 } else if (val2 == 0xff) {
                     array_printf(into, "block");
+                } else if (val2 == 0xfd) {
+                    array_printf(into, "cyclic");
                 } else {
                     array_printf(into, "%lld", val2);
                 }
@@ -785,6 +921,8 @@ bool factorio_explain(Sat_instance* inst, u64 id, Array_t<u64> args, Array_dyn<u
                 array_printf(into, "sum");
             } else if (val2 == 0xff) {
                 array_printf(into, "block");
+            } else if (val2 == 0xfd) {
+                array_printf(into, "cyclic");
             } else {
                 array_printf(into, "%lld", val2);
             }
@@ -811,13 +949,15 @@ bool factorio_explain(Sat_instance* inst, u64 id, Array_t<u64> args, Array_dyn<u
         char const* names[] = {
             nullptr, "field_basic", "field_underground", "field_border", "field_unary",
             "field_border_unary", "line_at_most", "line_equal_half", "line_equal_const",
-            "line_equal", "lines_equal", "lines_equal_half"
+            "line_equal", "lines_equal", "lines_equal_half",
+            "line_cyclic_bipart", "line_is_fraction", "lines_are_fraction",
         };
         s64 names_size = sizeof(names) / sizeof(names[0]);
         u64 argtype[] = {
             0, 11, 11, 11, 11,
             1131, 22, 22, 21,
-            22, 22, 22
+            22, 22, 22,
+            2, 222, 222
         };
         s64 argtype_size = sizeof(argtype) / sizeof(argtype[0]);
         assert(argtype_size == names_size);
@@ -922,7 +1062,8 @@ void factorio_balancer(Sat_instance* inst, Factorio_params params) {
     arr[fpar_n_linelen - o] = max(params.yoff_input.size, params.yoff_output.size) * params.scale_fac;
     arr[fpar_n_lines   - o] = arr[fpar_n_linedim - o] + 1 + params.do_blocking;
     arr[fpar_s_input   - o] = params.scale_fac;
-    arr[fpar_s_output  - o] = arr[fpar_n_linelen - o];
+    arr[fpar_s_output  - o] = params.yoff_input.size * params.scale_fac;
+    arr[fpar_do_blocking - o] = params.do_blocking;
 
     sat_register_expand_func(inst, GROUP_FACTORIO, &factorio_expand);
     sat_register_rewrite_func(inst, CONSTRAINT_FACTORIO, &factorio_rewrite);
@@ -992,11 +1133,33 @@ struct Factorio_instance {
 };
 
 struct Factorio_solution {
+    struct Line_info {
+        s64 x, y, line, value;
+    };
+    
     Array_t<u8> name;
     Array_t<u8> instance_name;
     Array_t<u8> ascii_diagram;
+    Array_t<Line_info> line_infos;
 };
 
+void factorio_clauses_from_solution(Sat_instance* inst, Factorio_solution* sol) {
+    factorio_clauses_from_diagram(inst, sol->ascii_diagram);
+
+    for (auto info: sol->line_infos) {
+        Field f {info.x, info.y};
+        u64 line;
+        if (info.line == 0xfe) {
+            line = f.line_sum;
+        } else if (info.line == 0xfe) {
+            line = f.line_block;
+        } else {
+            line = f.line_first + info.line * 256;
+        }
+        sat_add(inst, Factorio::line_equal_const, {line, (u64)info.value});
+    }
+}
+    
 struct Factorio_db {
     // This modifies the memory inside!
     Array_t<u8> _parsed_text;
@@ -1005,6 +1168,7 @@ struct Factorio_db {
 };
 
 void factorio_db_clear(Factorio_db* fdb) {
+    // @leak
     fdb->instances.size = 0;
     fdb->solutions.size = 0;
 }
@@ -1032,7 +1196,7 @@ void factorio_db_parse(Factorio_db* fdb, Array_t<u8> data) {
         u8 c = i < data.size ? data[i] : 0;
         bool istok = false, isspace = false;
         
-        for (u8 cc: ",=[]{}"_arr) istok   |= c == cc;
+        for (u8 cc: ",=[]{}()*"_arr) istok   |= c == cc;
         for (u8 cc: " \t\n"_arr)  isspace |= c == cc;
         isspace |= c == 0;
 
@@ -1190,7 +1354,7 @@ void factorio_db_parse(Factorio_db* fdb, Array_t<u8> data) {
             {Array_dyn<u8> diagram;
             array_reserve(&diagram, total_size);
             diagram.do_not_reallocate = true;
-            
+
             while (tokens[i].type != '}') {
                 Array_t<u8> line;
                 match(&i, Token::IDENTIFIER, &line);
@@ -1201,8 +1365,65 @@ void factorio_db_parse(Factorio_db* fdb, Array_t<u8> data) {
 
             sol.ascii_diagram = diagram;}
             
-            array_push_back(&fdb->solutions, sol);
             match(&i, '}');
+            
+            if (i < tokens.size and tokens[i].type == '{') {
+                Array_dyn<Factorio_solution::Line_info> line_infos;
+                match(&i, '{');
+                while (i < tokens.size and tokens[i].type != '}') {
+                    Factorio_solution::Line_info info;
+                    match(&i, '(');
+                    match(&i, Token::NUMBER);
+                    info.x = tokens[i-1].number;
+                    match(&i, ',');
+                    match(&i, Token::NUMBER);
+                    info.y = tokens[i-1].number;
+                    match(&i, ')'); 
+                    Array_t<u8> field;
+                    match(&i, Token::IDENTIFIER, &field);
+                    
+                    if (not array_equal_str(field, ".lines")) {
+                        fprintf(stderr, "Error (line %lld): Expected '.lines', got '", tokens[i-1].line);
+                        fwrite(field.data, 1, field.size, stderr);
+                        fprintf(stderr, "'\n");
+                        exit(5);
+                    }
+                    match(&i, '='); 
+
+                    match(&i, '(');
+                    s64 offset = 0;
+                    while (i < tokens.size and tokens[i].type != ')') {
+                        if (tokens[i].type == '*') {
+                            // We could check whether the star makes sense at this point
+                            match(&i, '*');
+                            offset = 0xfe;
+                            
+                            if (tokens[i].type == ')') break;
+                            match(&i, ',');
+                            continue;
+                        }
+                        
+                        match(&i, Token::NUMBER);
+                        info.line = offset;
+                        info.value = tokens[i-1].number;
+                        array_push_back(&line_infos, info);
+                        
+                        if (tokens[i].type == ')') break;
+                        match(&i, ',');
+                        
+                        ++offset;
+                    }
+                    match(&i, ')');
+                    
+                    if (i >= tokens.size or tokens[i].type == '}') break;
+                    match(&i, ',');
+                }
+                match(&i, '}');
+
+                sol.line_infos = line_infos;
+            }
+            
+            array_push_back(&fdb->solutions, sol);
         } else {
             fprintf(stderr, "Error (line %lld): Expected either 'instance' or 'solution', got '", tokens[i-1].line);
             fwrite(heading.data, 1, heading.size, stderr);

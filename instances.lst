@@ -142,7 +142,7 @@ solution 2to8 sol1 {
 }
 
 instance 3to2 {
-    nx = 6, ny = 5, scale_fac = 2, do_blocking = 0,
+    nx = 6, ny = 5, scale_fac = 6, do_blocking = 1,
     yoff_output = [1, 0, 2], yoff_input = [0, 1]
 }
 solution 3to2 sol1 {
@@ -151,10 +151,12 @@ solution 3to2 sol1 {
     .>S>S>.v.^.<
     .>S>>u.vu>.^
     .^.<.<.<....
+} {
+  (0,3).lines = (4,4,4),
 }
 
 instance 3to3 {
-    nx = 6, ny = 6, scale_fac = 1, do_blocking = 0,
+    nx = 6, ny = 6, scale_fac = 2, do_blocking = 0,
     yoff_output = [1, 0, 2], yoff_input = [1, 3, 2]
 }
 solution 3to3 sol1 {
@@ -179,6 +181,17 @@ solution 3to4 sol1 {
     .^..SvSvS^S^..
     .^.<.<.>.^....
 }
+
+solution 3to4 sol2 {
+    .....>.>.v....
+    S>>u.^.v.<u>S>
+    S>.vu^vuS>.>S>
+    >u.vu>.>S>.>S>
+    ...>.>.>.>S>S>
+    ....^uuv.>S>.v
+    .....^.<.^.<.<
+}
+
 
 instance 3to5 {
     nx = 9, ny = 7, scale_fac = 2, do_blocking = 0,

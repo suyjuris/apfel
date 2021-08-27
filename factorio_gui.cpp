@@ -74,6 +74,47 @@ void factorio_solution_draw_image(Backend* backend, Factorio_solution_state* dra
     s64 n_lines = hashmap_get(&draw->inst->params, Factorio::fpar_n_lines);
     s64 n_linedim = hashmap_get(&draw->inst->params, Factorio::fpar_n_linedim);
     s64 n_linelen = hashmap_get(&draw->inst->params, Factorio::fpar_n_linelen);
+
+    if (gui_shortcut(&backend->gui, Key::create_special(Key::C_SAVE, Key::MOD_CTRL))) {
+        auto* sol = draw->sol;
+
+        Array_dyn<u8> str;
+        defer { array_free(&str); };
+
+        array_printf(&str, "solution ? ? {\n");
+        for (s64 yi = 0; yi < ny; ++yi) {
+            array_printf(&str, "    ");
+            for (s64 xi = 0; xi < nx; ++xi) {
+                Field f {xi, yi};
+
+                u8 c_inp = '.';
+                if (sol->istrue(f.dirs[2].inp)) c_inp = 'v';
+                if (sol->istrue(f.dirs[3].inp)) c_inp = '>';
+                if (sol->istrue(f.dirs[0].inp)) c_inp = '^';
+                if (sol->istrue(f.dirs[1].inp)) c_inp = '<';
+
+                u8 c_out = '.';
+                if (sol->istrue(f.dirs[0].out)) c_out = 'v';
+                if (sol->istrue(f.dirs[1].out)) c_out = '>';
+                if (sol->istrue(f.dirs[2].out)) c_out = '^';
+                if (sol->istrue(f.dirs[3].out)) c_out = '<';
+
+                if (draw->sol->istrue(f.empty)) {
+                    array_printf(&str, "..");
+                } else if (draw->sol->istrue(f.belt)) {
+                    array_printf(&str, ".%c", c_out);
+                } else if (draw->sol->istrue(f.split)) {
+                    array_printf(&str, "S%c", c_out);
+                } else if (draw->sol->istrue(f.under)) {
+                    if (c_out != '.') array_printf(&str, "u%c", c_out);
+                    else              array_printf(&str, "%cu", c_inp);
+                }
+            }
+            array_push_back(&str, '\n');
+        }
+        array_printf(&str, "}\n");
+        platform_clipboard_set(Platform_clipboard::CONTROL_C, str);
+    }
     
     float center_size = max(max(bar_size_min.x * n_lines, bar_size_min.y * n_linelen), 24.f);
     float size = (border_size + border_pad) * 2 + center_size;
@@ -206,18 +247,24 @@ void factorio_solution_draw_image(Backend* backend, Factorio_solution_state* dra
                 shape_rectangle(&backend->shapes, dpp - (v1 + v2)*size, v1*size + 2*v2*size, fill);
             }
 
+            Color line_color_off[] = {Palette::BLUELIGHT, Color {109, 201, 96}, Palette::REDLIGHT};
+            Color line_color_on[] = {Palette::BLUE, Palette::GREEN, Palette::RED};
+            
             for (s64 i = 0; i < n_lines; ++i) {
                 u64 line = i <  n_linedim ? f.line_first | (i << 8) :
                            i == n_linedim ? f.line_sum :
                                             f.line_block;
+                Color c_off = line_color_off[(i >= n_linedim) + (i > n_linedim)];
+                Color c_on  = line_color_on [(i >= n_linedim) + (i > n_linedim)];
+                
                 backend->temp_u64.size = 0;
                 auto arr = sat_expand(draw->inst, line, &backend->temp_u64);
                 for (s64 j = 0; j < arr.size; ++j) {
                     Color col;
                     switch (draw->sol->get(arr[j])) {
                     case Sat_solution::L_UNASSIGNED: col = Palette::GREY; break;
-                    case Sat_solution::L_FALSE:      col = Palette::BLUELIGHT; break;
-                    case Sat_solution::L_TRUE:       col = Palette::BLUE; break;
+                    case Sat_solution::L_FALSE:      col = c_off; break;
+                    case Sat_solution::L_TRUE:       col = c_on; break;
                     default: assert(false);
                     }
 
@@ -233,7 +280,7 @@ void factorio_solution_draw_detail(Backend* backend, Factorio_solution_state* dr
     GUI_TIMER(&backend->gui);
     
     s64 n_linedim = hashmap_get(&draw->inst->params, Factorio::fpar_n_linedim);
-    bool do_block = hashmap_get(&draw->inst->params, Factorio::fpar_do_block);
+    bool do_blocking = hashmap_get(&draw->inst->params, Factorio::fpar_do_blocking);
 
     auto font_sans = font_instance_get(&backend->fonts, backend->font_sans);
 
@@ -355,17 +402,30 @@ void factorio_solution_draw_detail(Backend* backend, Factorio_solution_state* dr
         
         p.x = base_x; p.y += font_sans.newline;
     };
-    
-    for (s64 i = 0; i < n_linedim; ++i) {
-        backend->temp_u8.size = 0;
-        array_printf(&backend->temp_u8, "line[%lld]", i);
-        do_line(backend->temp_u8, f.line_first | (i << 8));
-    }
-    do_line("sum"_arr,   f.line_sum);
-    if (do_block) {
-        do_line("block"_arr, f.line_block);
-    }
 
+    auto do_lines = [&](u64 line_first) {
+        for (s64 i = 0; i < n_linedim; ++i) {
+            backend->temp_u8.size = 0;
+            array_printf(&backend->temp_u8, "line[%lld]", i);
+            do_line(backend->temp_u8, line_first | (i << 8));
+        }
+        do_line("sum"_arr, line_first | 0xfe00);
+        if (do_blocking) {
+            do_line("block"_arr, line_first | 0xff00);
+            do_line("cyclic"_arr, line_first | 0xfd00 | Field::FVAR_CYCLE);
+        }
+    };
+
+    do_lines(f.line_first);
+
+    p.y += font_sans.newline * 0.2f;
+    font_draw_string(&backend->fonts, backend->font_sans, "sumx"_arr, p, Palette::BLACK, nullptr, &p.y);
+    do_lines(f.dirs[Dir::RIGHT - Dir::BEG].sum_line_first);
+
+    p.y += font_sans.newline * 0.2f;
+    font_draw_string(&backend->fonts, backend->font_sans, "sumy"_arr, p, Palette::BLACK, nullptr, &p.y);
+    do_lines(f.dirs[Dir::TOP - Dir::BEG].sum_line_first);
+    
     if (out_x) *out_x = max_x;
 }
 
@@ -489,15 +549,23 @@ struct Factorio_propagation_state {
     Sat_instance inst;
     Sat_solution sol;
 
+    Array_t<u8> name_instance, name_solution;
+
     Array_dyn<s64> anim_indices;
     Array_dyn<Sat_propagation> anim_data;
     s64 anim_frame;
 
+    Array_dyn<u64> frame_conflicts;
+    s64 total_conflicts;
+
     Factorio_solution_state fsol;
 };
 
-void factorio_propagation_init(Factorio_propagation_state* prop, Factorio_params p, Factorio_solution* opt_sol) {
+void factorio_propagation_init(Factorio_propagation_state* prop, Factorio_instance finst, Factorio_solution* opt_sol) {
     sat_solution_free(&prop->sol);
+
+    Factorio_params p = finst.params;
+    prop->name_instance = finst.name;
 
     prop->anim_indices.size = 0;
     prop->anim_data.size = 0;
@@ -505,7 +573,10 @@ void factorio_propagation_init(Factorio_propagation_state* prop, Factorio_params
     sat_init(&prop->inst);
     factorio_balancer(&prop->inst, p);
     if (opt_sol) {
-        factorio_clauses_from_diagram(&prop->inst, opt_sol->ascii_diagram);
+        prop->name_solution = opt_sol->name;
+        factorio_clauses_from_solution(&prop->inst, opt_sol);
+    } else {
+        prop->name_solution = {};
     }
 
     prop->sol = sat_solution_from_instance(&prop->inst, &prop->anim_indices, &prop->anim_data);
@@ -536,19 +607,49 @@ void factorio_propagation_init(Factorio_propagation_state* prop, Factorio_params
     }
 
     factorio_solution_init(&prop->fsol, &prop->inst, &prop->sol);
+
+    prop->total_conflicts = 0;
+    prop->frame_conflicts.size = 0;
+    array_append_zero(&prop->frame_conflicts, (prop->anim_indices.size-1 + 63)/64);
+    
+    for (s64 frame = 1; frame < prop->anim_indices.size; ++frame) {
+        auto arr = array_subindex(prop->anim_indices, prop->anim_data, frame-1);
+        s64 n_conflicts = 0;
+        for (Sat_propagation i: arr) n_conflicts += not prop->sol[i.lit];
+        
+        if (n_conflicts) {
+            bitset_set(&prop->frame_conflicts, frame, true);
+        }
+        prop->total_conflicts += n_conflicts;
+    }
 }
 
 void factorio_propagation_draw(Backend* context, Factorio_propagation_state* prop, Vec2 pos, Vec2 size) {
     float pad = 10.f; // TODO?
 
-    if        (gui_shortcut_special(&context->gui, Key::ARROW_L)) {
+    if (gui_shortcut_special(&context->gui, Key::ARROW_L)) {
         prop->anim_frame -= prop->anim_frame > 0;
-    } else if (gui_shortcut_special(&context->gui, Key::ARROW_R)) {
+    }
+    if (gui_shortcut_special(&context->gui, Key::ARROW_R)) {
         prop->anim_frame += prop->anim_frame < prop->anim_indices.size-1;
-    } else if (gui_shortcut_special(&context->gui, Key::HOME)) {
+    }
+    if (gui_shortcut_special(&context->gui, Key::HOME)) {
         prop->anim_frame = 0;
-    } else if (gui_shortcut_special(&context->gui, Key::END)) {
+    }
+    if (gui_shortcut_special(&context->gui, Key::END)) {
         prop->anim_frame = prop->anim_indices.size-1;
+    }
+    if (gui_shortcut_special(&context->gui, Key::PAGE_U)) {
+        while (prop->anim_frame < prop->anim_indices.size-1) {
+            ++prop->anim_frame;
+            if (bitset_get(prop->frame_conflicts, prop->anim_frame)) break;
+        }
+    }
+    if (gui_shortcut_special(&context->gui, Key::PAGE_D)) {
+        while (prop->anim_frame > 0) {
+            --prop->anim_frame;
+            if (bitset_get(prop->frame_conflicts, prop->anim_frame)) break;
+        }
     }
     
     sat_solution_init(&prop->sol);
@@ -556,6 +657,17 @@ void factorio_propagation_draw(Backend* context, Factorio_propagation_state* pro
     for (Sat_propagation i: arr) {
         if (prop->sol.get(i.lit) == Sat_solution::L_UNASSIGNED) prop->sol.set(i.lit);
     }
+
+    context->temp_u8.size = 0;
+    array_append(&context->temp_u8, prop->name_instance);
+    if (prop->name_solution.size) {
+        array_push_back(&context->temp_u8, '/');
+        array_append(&context->temp_u8, prop->name_solution);
+    }
+    array_printf(&context->temp_u8, " (total conflicts %lld)", prop->total_conflicts);
+    
+    Vec2 p = pos;
+    font_draw_string(&context->fonts, context->font_sans, context->temp_u8, p, Palette::BLACK, nullptr, &p.y); 
     
     context->temp_u8.size = 0;
     array_printf(&context->temp_u8, "Frame %lld/%lld", prop->anim_frame, prop->anim_indices.size - 1);
@@ -568,7 +680,6 @@ void factorio_propagation_draw(Backend* context, Factorio_propagation_state* pro
         array_printf(&context->temp_u8, " (props: %lld, conflicts: %lld)", n_lits, n_conflicts);
     }
 
-    Vec2 p = pos;
     font_draw_string(&context->fonts, context->font_sans, context->temp_u8, p, Palette::BLACK, nullptr, &p.y); 
     p.y += pad;
 
@@ -648,14 +759,8 @@ void factorio_solver_doinput(Factorio_solver_state* solver, Font_data* fonts, s6
 }
 
 void factorio_solver_stop(Factorio_solver_state* solver) {
-    if (solver->solver.output_fd != -1) {
-        if (platform_close_try(solver->solver.output_fd)) {
-            platform_error_print();
-            exit(11);
-        }
-        solver->solver.output_fd = -1;
-        solver->redraw_fd_token = 0;
-    }
+    sat_solver_stop(&solver->solver);
+    solver->redraw_fd_token = 0;
 }
 
 void factorio_solver_draw(Backend* context, Factorio_solver_state* solver, Vec2 pos, Vec2 size, Vec2 pad) {
@@ -742,7 +847,7 @@ Factorio_params_result factorio_params_draw(Backend* context, Factorio_params_st
     if (action_draw_instance) {
         return {Factorio_gui_state::DRAW_PROPAGATION, draw->current_instance, draw->current_solution};
     } else if (action_run_solver) {
-        return {Factorio_gui_state::RUN_SOLVER, draw->current_instance};
+        return {Factorio_gui_state::RUN_SOLVER, draw->current_instance, draw->current_solution};
     }
 
     gui_scrollbar(&context->gui, "choose_instance,scroll"_arr, {}, p, size, 0.f, &size.x, &p.y);
@@ -903,7 +1008,7 @@ void factorio_checksol_doinput(Factorio_checksol_state* check) {
         if (row->result == Factorio_checksol_state::NONE) {
             sat_init(&check->inst);
             factorio_balancer(&check->inst, check->fdb->instances[row->instance].params);
-            factorio_clauses_from_diagram(&check->inst, check->fdb->solutions[row->solution].ascii_diagram);
+            factorio_clauses_from_solution(&check->inst, &check->fdb->solutions[row->solution]);
 
             sat_solver_init(&check->solver, &check->inst);
             row->result = Factorio_checksol_state::PENDING;
@@ -933,6 +1038,11 @@ void factorio_checksol_doinput(Factorio_checksol_state* check) {
             assert(false);
         }
     }
+}
+
+void factorio_checksol_stop(Factorio_checksol_state* check) {
+    sat_solver_stop(&check->solver);
+    check->redraw_fd_token = 0;
 }
 
 void factorio_checksol_draw(Backend* backend, Factorio_checksol_state* check, Vec2 p, Vec2 size) {
@@ -1008,7 +1118,6 @@ void factorio_gui_reset(Factorio_gui* fgui) {
     case Factorio_gui_state::CHOOSE_PARAMS:
     case Factorio_gui_state::DRAW_PROPAGATION:
     case Factorio_gui_state::DRAW_SOLUTION:
-    case Factorio_gui_state::CHECK_SOLUTIONS:
         // nothing
         break;
             
@@ -1016,6 +1125,10 @@ void factorio_gui_reset(Factorio_gui* fgui) {
         factorio_solver_stop(&fgui->solver);
         break;
 
+    case Factorio_gui_state::CHECK_SOLUTIONS:
+        factorio_checksol_stop(&fgui->checksol);
+        break;
+        
     default: assert(false);
     }
 
@@ -1049,12 +1162,17 @@ void factorio_gui_draw(Backend* backend, Factorio_gui* fgui) {
             
         } else if (result.action == Factorio_gui_state::DRAW_PROPAGATION) {
             Factorio_solution* sol = result.solution >= 0 ? &fgui->params.fdb.solutions[result.solution] : nullptr;
-            factorio_propagation_init(&fgui->propagation, fgui->params.fdb.instances[result.instance].params, sol);
+            factorio_propagation_init(&fgui->propagation, fgui->params.fdb.instances[result.instance], sol);
             
         } else if (result.action == Factorio_gui_state::RUN_SOLVER) {
+            Factorio_solution* sol = result.solution >= 0 ? &fgui->params.fdb.solutions[result.solution] : nullptr;
+            
             sat_init(&fgui->solver.inst);
             factorio_balancer(&fgui->solver.inst, fgui->params.fdb.instances[result.instance].params);
-
+            if (sol) {
+                factorio_clauses_from_solution(&fgui->solver.inst, sol);
+            }
+            
             factorio_solver_init(&fgui->solver);
             
         } else if (result.action == Factorio_gui_state::CHECK_SOLUTIONS) {

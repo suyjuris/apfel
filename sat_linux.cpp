@@ -176,3 +176,13 @@ void sat_solver_process(Sat_solver_state* solver, pollfd pfd) {
     platform_error_print();
     exit(11);
 }
+
+void sat_solver_stop(Sat_solver_state* solver) {
+    if (solver->output_fd != -1) {
+        if (platform_close_try(solver->output_fd)) {
+            platform_error_print();
+            exit(11);
+        }
+        solver->output_fd = -1;
+    }
+}
