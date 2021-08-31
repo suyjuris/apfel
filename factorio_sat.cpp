@@ -1134,7 +1134,7 @@ struct Factorio_instance {
 
 struct Factorio_solution {
     enum Flags: u64 {
-        UNSAT = 1
+        UNSAT = 1, SKIP = 2
     };
     
     struct Line_info {
@@ -1355,6 +1355,8 @@ void factorio_db_parse(Factorio_db* fdb, Array_t<u8> data) {
 
                     if (array_equal_str(flag_name, "unsat")) {
                         sol.flags |= Factorio_solution::UNSAT;
+                    } else if (array_equal_str(flag_name, "skip")) {
+                        sol.flags |= Factorio_solution::SKIP;
                     } else {
                         fprintf(stderr, "Error (line %lld): Unrecognised solution flag '", tokens[i-1].line);
                         fwrite(flag_name.data, 1, flag_name.size, stderr);

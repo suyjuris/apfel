@@ -1099,6 +1099,7 @@ void factorio_checksol_init(Factorio_checksol_state* check, Factorio_db* fdb) {
     
     for (s64 i = 0; i < fdb->solutions.size; ++i) {
         auto fsol = fdb->solutions[i];
+        if (fsol.flags & Factorio_solution::SKIP) continue;
 
         s64 j;
         for (j = 0; j < fdb->instances.size; ++j) {

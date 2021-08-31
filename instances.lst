@@ -3,7 +3,7 @@ instance simple1 {
     nx = 3, ny = 2, scale_fac = 1, do_blocking = 0,
     yoff_output = [0], yoff_input = [0, 1]
 }
-solution simple1 sol1 {
+solution simple1 sol1 [skip] {
     .>S>.>
     ..S>.>
 }
