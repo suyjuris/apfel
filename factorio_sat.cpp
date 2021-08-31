@@ -1133,6 +1133,10 @@ struct Factorio_instance {
 };
 
 struct Factorio_solution {
+    enum Flags: u64 {
+        UNSAT = 1
+    };
+    
     struct Line_info {
         s64 x, y, line, value;
     };
@@ -1141,6 +1145,7 @@ struct Factorio_solution {
     Array_t<u8> instance_name;
     Array_t<u8> ascii_diagram;
     Array_t<Line_info> line_infos;
+    u64 flags = 0;
 };
 
 void factorio_clauses_from_solution(Sat_instance* inst, Factorio_solution* sol) {
@@ -1340,8 +1345,33 @@ void factorio_db_parse(Factorio_db* fdb, Array_t<u8> data) {
             Factorio_solution sol;
             match(&i, Token::IDENTIFIER, &sol.instance_name);
             match(&i, Token::IDENTIFIER, &sol.name);
+
+            if (i < tokens.size and tokens[i].type == '[') {
+                match(&i, '[');
+
+                while (i < tokens.size and tokens[i].type != ']') {
+                    Array_t<u8> flag_name;
+                    match(&i, Token::IDENTIFIER, &flag_name);
+
+                    if (array_equal_str(flag_name, "unsat")) {
+                        sol.flags |= Factorio_solution::UNSAT;
+                    } else {
+                        fprintf(stderr, "Error (line %lld): Unrecognised solution flag '", tokens[i-1].line);
+                        fwrite(flag_name.data, 1, flag_name.size, stderr);
+                        fprintf(stderr, "'\n");
+                        exit(5);
+                    }
+
+                    if (i < tokens.size and tokens[i].type == ']') break;
+                    match(&i, ',');
+                }
+                
+                match(&i, ']');
+            }
+            
             match(&i, '{');
 
+            // This calculates the number of lines in the diagram
             s64 total_size = 0;
             {s64 orig_i = i;
             while (tokens[i].type != '}') {

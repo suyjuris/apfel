@@ -292,12 +292,22 @@ void factorio_solution_draw_image(Backend* backend, Factorio_solution_state* dra
 
                 if (inp) shape_arrowhead(&backend->shapes, dp, -v1 * border_size/2 * arrow_fac, fill);
                 if (out) shape_arrowhead(&backend->shapes, dp,  v1 * border_size/2 * arrow_fac, fill);
+
+                bool inp_conn = inp and draw->sol->istrue(d.move().back().out);
+                bool out_conn = out and draw->sol->istrue(d.move().back().inp);
+                
+                if (inp_conn or out_conn) {
+                    float size = border_size + border_pad;
+                    shape_rectangle(&backend->shapes, dp - size / 2, {size, size}, lerp(Palette::WHITE, Palette::BLUE, 0.3f), 0.01f);
+                }
+                
                 if (sid) {
                     Color fill2 = iserr ? Palette::RED : lerp(Palette::BLUE, Palette::BGBLUE, 0.3f);
                     float thickness = border_size * 0.15f;
                     Vec2 w = v2 * (0.5f * (size + center_size) + thickness) + v1 * thickness;
                     shape_rectangle(&backend->shapes, dp - w / 2.f, w, fill2);
                 }
+                
 
                 if (out) dir_out = dd;
                 if (inp) dir_inp = dd;
@@ -338,9 +348,12 @@ void factorio_solution_draw_image(Backend* backend, Factorio_solution_state* dra
                 float arr[4] = {0, 1, 0, -1};
                 Vec2 v1 = {arr[ dd       ], arr[(dd+1) & 3]};
                 Vec2 v2 = {arr[(dd+1) & 3], arr[(dd+2) & 3]};
+                Vec2 dp = pi + size/2 + v1 * (size - border_size - border_pad) / 2;
                 Vec2 dpp = pi + size/2 + v1 * size/2;
-
                 float size = border_size * 0.6f;
+
+                shape_rectangle(&backend->shapes, dp - size, {size*2, size*2}, lerp(Palette::WHITE, Palette::GREEN, 0.4f));
+                
                 shape_rectangle(&backend->shapes, dpp - (v1 + v2)*size, v1*size + 2*v2*size, fill);
             }
 
@@ -1095,7 +1108,7 @@ void factorio_checksol_init(Factorio_checksol_state* check, Factorio_db* fdb) {
 
         array_push_back(&check->rows, {j, i});
         
-        if (fsol.name.size >= 3 and array_equal_str(array_subarray(fsol.name, 0, 3), "err")) {
+        if (fsol.flags & Factorio_solution::UNSAT) {
             check->rows.back().expect_unsat = true;
         }
     }
