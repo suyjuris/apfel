@@ -1081,6 +1081,9 @@ struct Factorio_checksol_state {
         s64 instance, solution;
         bool expect_unsat = false;
         u8 result = 0;
+        u64 n_variables = -1, n_clauses = -1, size_bytes = -1;
+        u64 time_generate = -1, time_dimacs = -1, time_solve = -1;
+        u64 time_last = 0;
     };
 
     Factorio_db* fdb;
@@ -1123,11 +1126,26 @@ void factorio_checksol_doinput(Factorio_checksol_state* check) {
         auto* row = &check->rows[check->cur_row];
         
         if (row->result == Factorio_checksol_state::NONE) {
+            row->time_last = platform_now_real();
+            
             sat_init(&check->inst);
             factorio_balancer(&check->inst, check->fdb->instances[row->instance].params);
             factorio_clauses_from_solution(&check->inst, &check->fdb->solutions[row->solution]);
 
+            {u64 now = platform_now_real();
+            row->time_generate = now - row->time_last;
+            row->time_last = now;}
+            
+            row->n_clauses = check->inst.clause_offsets.size - 1;
+            
             sat_solver_init(&check->solver, &check->inst);
+
+            {u64 now = platform_now_real();
+            row->time_dimacs = now - row->time_last;
+            row->time_last = now;}
+            
+            row->n_variables = check->solver.dimacs.map_forth.size;
+            row->size_bytes = check->solver.dimacs.text.size;
             row->result = Factorio_checksol_state::PENDING;
         }
         if (row->result == Factorio_checksol_state::PENDING) {
@@ -1140,12 +1158,23 @@ void factorio_checksol_doinput(Factorio_checksol_state* check) {
             if (check->solver.state == Sat_solver_state::RUNNING) {
                 check->redraw_fd_token = platform_redraw_fd({check->solver.output_fd, POLLIN, 0});
             }
+
+            bool done;
             if (check->solver.state == Sat_solver_state::SAT) {
                 row->result = Factorio_checksol_state::SAT;
-                ++check->cur_row;
-                continue;
+                done = true;
             } else if (check->solver.state == Sat_solver_state::UNSAT) {
                 row->result = Factorio_checksol_state::UNSAT;
+                done = true;
+            } else {
+                done = false;
+            }
+            
+            if (done) {
+                u64 now = platform_now_real();
+                row->time_solve = now - row->time_last;
+                row->time_last = now;
+                
                 ++check->cur_row;
                 continue;
             } else {
@@ -1180,29 +1209,100 @@ void factorio_checksol_draw(Backend* backend, Factorio_checksol_state* check, Ve
         font_draw_string(&backend->fonts, backend->font_sans, s, *p, c, &x, &p->y);
         if (out_w) *out_w = max(*out_w, x - p->x);
     };
-    
-    
-    float w0 = 0.f;
-    cell("instance"_arr, &p, &w0);
-    p.y += pad;
-    for (Row i: check->rows) cell(fdb->instances[i.instance].name, &p, &w0);
-    p.x += w0 + pad; p.y = p0.y;
 
-    float w1 = 0.f;
-    cell("solution"_arr, &p, &w1);
-    p.y += pad;
-    for (Row i: check->rows) cell(fdb->solutions[i.solution].name, &p, &w1);
-    p.x += w1 + pad; p.y = p0.y;
+    static constexpr s64 n_columns = 9;
+    float w[n_columns] = {};
+    s64 col = 0;
     
-    float w2 = 0.f;
-    cell("result"_arr, &p, &w2);
+    cell("instance"_arr, &p, &w[col]);
     p.y += pad;
-    for (Row i: check->rows) cell(strings[i.result], &p, &w2, colors[i.result ^ i.expect_unsat]);
-    p.x += w2 + pad;
+    for (Row i: check->rows) cell(fdb->instances[i.instance].name, &p, &w[col]);
+    p.x += w[col] + pad; p.y = p0.y; ++col;
 
+    cell("solution"_arr, &p, &w[col]);
+    p.y += pad;
+    for (Row i: check->rows) cell(fdb->solutions[i.solution].name, &p, &w[col]);
+    p.x += w[col] + pad; p.y = p0.y; ++col;
+
+    cell("variables"_arr, &p, &w[col]);
+    p.y += pad;
+    for (Row i: check->rows) {
+        backend->temp_u8.size = 0;
+        if (i.n_variables != -1) {
+            array_printf(&backend->temp_u8, "%lld", i.n_variables);
+        }
+        cell(backend->temp_u8, &p, &w[col]);
+    }
+    p.x += w[col] + pad; p.y = p0.y; ++col;
+
+    cell("clauses"_arr, &p, &w[col]);
+    p.y += pad;
+    for (Row i: check->rows) {
+        backend->temp_u8.size = 0;
+        if (i.n_clauses != -1) {
+            array_printf(&backend->temp_u8, "%lld", i.n_clauses);
+        }
+        cell(backend->temp_u8, &p, &w[col]);
+    }
+    p.x += w[col] + pad; p.y = p0.y; ++col;
+
+    cell("size"_arr, &p, &w[col]);
+    p.y += pad;
+    for (Row i: check->rows) {
+        backend->temp_u8.size = 0;
+        if (i.size_bytes != -1) {
+            array_printf(&backend->temp_u8, "%.1f MiB", i.size_bytes / (float)(1 << 20ull));
+        }
+        cell(backend->temp_u8, &p, &w[col]);
+    }
+    p.x += w[col] + pad; p.y = p0.y; ++col;
+
+    cell("gen"_arr, &p, &w[col]);
+    p.y += pad;
+    for (Row i: check->rows) {
+        backend->temp_u8.size = 0;
+        if (i.time_generate != -1) {
+            array_printf(&backend->temp_u8, "%.3fs", i.time_generate * 1e-9f);
+        }
+        cell(backend->temp_u8, &p, &w[col]);
+    }
+    p.x += w[col] + pad; p.y = p0.y; ++col;
+
+    cell("dimacs"_arr, &p, &w[col]);
+    p.y += pad;
+    for (Row i: check->rows) {
+        backend->temp_u8.size = 0;
+        if (i.time_dimacs != -1) {
+            array_printf(&backend->temp_u8, "%.3fs", i.time_dimacs * 1e-9f);
+        }
+        cell(backend->temp_u8, &p, &w[col]);
+    }
+    p.x += w[col] + pad; p.y = p0.y; ++col;
+
+    cell("solve"_arr, &p, &w[col]);
+    p.y += pad;
+    for (Row i: check->rows) {
+        backend->temp_u8.size = 0;
+        if (i.time_solve != -1) {
+            array_printf(&backend->temp_u8, "%.3fs", i.time_solve * 1e-9f);
+        }
+        cell(backend->temp_u8, &p, &w[col]);
+    }
+    p.x += w[col] + pad; p.y = p0.y; ++col;
+
+    cell("result"_arr, &p, &w[col]);
+    p.y += pad;
+    for (Row i: check->rows) cell(strings[i.result], &p, &w[col], colors[i.result ^ i.expect_unsat]);
+    p.x += w[col] + pad; p.y = p0.y; ++col;
+    
     p.x = p0.x;
 
-    shape_rectangle(&backend->shapes, p0 + Vec2 {0.f, font_sans.newline + pad/2}, {w0 + w1 + w2 + 2*pad, 1.f}, Palette::BLACK);
+    assert(col == n_columns);
+
+    float w_sum = 0.f;
+    for (float wi: w) w_sum += wi;
+
+    shape_rectangle(&backend->shapes, p0 + Vec2 {0.f, font_sans.newline + pad/2}, {w_sum + 2*pad, 1.f}, Palette::BLACK);
 }
 
 void factorio_checksol_update(Backend* backend, Factorio_checksol_state* check, Vec2 p, Vec2 size) {

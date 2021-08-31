@@ -609,6 +609,10 @@ void font_draw_string(
     float* x_out=nullptr, float* yn_out=nullptr
 ) {
     float yn;
+    if (str.size == 0 and yn_out) {
+        auto inst = fonts->instances[font_instance ^ Font_data::MAGIC_INSTANCES];
+        yn = pos.y + inst.newline;
+    }
     for (s64 i = 0; i < str.size;) {
         u32 c;
         s64 bytes = _font_decode_utf8(array_subarray(str, i, str.size), &c);
