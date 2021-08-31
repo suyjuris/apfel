@@ -793,6 +793,7 @@ void sat_write_dimacs(Sat_instance* inst, Sat_dimacs* dimacs) {
     s64 patch_var_count_offset = dimacs->text.size;
     array_printf(&dimacs->text, "%20s %lld\n", "", inst->clause_offsets.size-1);
 
+    // TODO: remove
     Array_dyn<u64> lookups;
     defer { array_free(&lookups); };
     

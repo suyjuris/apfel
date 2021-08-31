@@ -5,6 +5,7 @@ GXX=g++-8
 CXXFLAGS="-fmax-errors=2 -Wall -Wextra -Wno-class-memaccess -Wno-sign-conversion -Wno-unused-variable -Wno-sign-compare -Wno-write-strings -Wno-unused-parameter -Wno-comment -std=c++14 -fno-exceptions -fno-rtti"
 LDFLAGS="-lGL -lX11 -lXrandr"
 LIBPROFILER=/usr/local/lib/libprofiler.so
+CPPSAT_LIBS="-lz"
 
 NAME=cppsat
 
@@ -15,9 +16,9 @@ if [ "$#" -lt 1 ]; then
 fi;
 
 if [ "$1" = "debug" ]; then
-    "$GXX" $CXXFLAGS -O0 -ggdb -Werror platform_linux.cpp -o "$NAME" $LDFLAGS
+    "$GXX" $CXXFLAGS -O0 -ggdb -Werror platform_linux.cpp -o "$NAME" $LDFLAGS $CPPSAT_LIBS
 elif [ "$1" = "release" ]; then
-    "$GXX" $CXXFLAGS -O2 platform_linux.cpp -o "$NAME" $LDFLAGS
+    "$GXX" $CXXFLAGS -O2 platform_linux.cpp -o "$NAME" $LDFLAGS $CPPSAT_LIBS
 elif [ "$1" = "construct" ]; then
     "$GXX" $CXXFLAGS -O0 -ggdb -Werror construct.cpp -o "construct" $LDFLAGS
 elif [ "$1" = "construct_release" ]; then

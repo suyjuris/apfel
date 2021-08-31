@@ -4,6 +4,7 @@
 #include "platform.hpp"
 #include <GL/glx.h>
 #include "platform_linux_autogen.cpp"
+#include <zlib.h>
 #define PLATFORM_INCLUDES
 
 #include "factorio_gui.cpp"
@@ -104,6 +105,7 @@ void linux_get_event_key(Array_dyn<Key>* keys, XKeyEvent e) {
     case XK_minus:        special = Key::C_ZOOM_OUT;  mod = ControlMask; break;
     case XK_0:            special = Key::C_ZOOM_ZERO; mod = ControlMask; break;
     case XK_Z:            special = Key::C_REDO;      mod = ControlMask | ShiftMask; break;
+    case XK_S:            special = Key::C_SAVEAS;    mod = ControlMask | ShiftMask; break;
     }
 
     // Exclude NumLock (Mod2) and CapsLock (Lock) from the modifier list, as our shortcuts should

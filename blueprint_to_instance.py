@@ -14,7 +14,9 @@ blueprint = subprocess.run(['xclip', '-o', '-selection', 'clipboard'], stdout=su
 if blueprint[0] != '0':
     print('Error: Clipboard is not a valid blueprint!', file=sys.stdout)
     sys.exit(5)
+print(zlib.decompress(base64.b64decode(blueprint[1:])).decode('utf-8'))
 data = json.loads(zlib.decompress(base64.b64decode(blueprint[1:])).decode('utf-8'))
+print(json.dumps(data, indent="  "))
 
 class Field:
     EMPTY=0
@@ -64,11 +66,11 @@ def print_balancer_single(blueprint, instances, instance_names):
     fields = defaultdict(Field)
 
     for ent in ents:
-        x = ent['position']['x']
-        y = ent['position']['y']
+        x = ent['position']['x'] - 0.5
+        y = ent['position']['y'] - 0.5
         d = dirs[ent.get('direction', 0)]
 
-        if ent['name'].endswith('-splitter'):
+        if ent['name'].endswith('splitter'):
             x1, y1 = int(floor(x)), int(floor(y))
             x2, y2 = int(ceil (x)), int(ceil (y))
             fields[x1,y1].typ = Field.SPLIT
@@ -77,15 +79,17 @@ def print_balancer_single(blueprint, instances, instance_names):
             fields[x2,y2].typ = Field.SPLIT
             fields[x2,y2].out = d
             fields[x2,y2].other = x1, y1
-        elif ent['name'].endswith('-underground-belt'):
+        elif ent['name'].endswith('underground-belt'):
+            x,y = int(x), int(y)
             fields[x,y].typ = Field.UNDER
             if   ent['type'] == 'output': fields[x,y].out = d
             elif ent['type'] == 'input':  fields[x,y].inp = d
             else: assert False
-        elif ent['name'].endswith('-transport-belt'):
+        elif ent['name'].endswith('transport-belt'):
+            x,y = int(x), int(y)
             fields[x,y].typ = Field.BELT
             fields[x,y].out = d
-
+    
     d_total = None
     for (x,y),f in fields.items():
         if f.out is None: continue
@@ -185,7 +189,14 @@ def print_balancer_single(blueprint, instances, instance_names):
 def print_balancer_book(book):
     instances = {}
     instances_names = []
-    for obj in book['blueprint_book']['blueprints']:
+
+    lst = []
+    if 'blueprint_book' in book:
+        lst += book['blueprint_book']['blueprints']
+    if 'blueprint' in book:
+        lst += [book]
+        
+    for obj in lst:
         bp = obj['blueprint']
         #print('#', bp['label'])
         print_balancer_single(bp, instances, instances_names)

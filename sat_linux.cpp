@@ -25,6 +25,9 @@ void sat_solver_init(Sat_solver_state* solver, Sat_instance* inst) {
     sat_write_dimacs(inst, &solver->dimacs);
     sat_solution_init(&solver->sol);
 
+    FILE* f = fopen("dimacs.out", "wb");
+    fwrite(solver->dimacs.text.data, 1, solver->dimacs.text.size, f);
+    
     pid_t parent_pid = getpid();
     
     int pipe_solver_to  [2] = {};

@@ -60,6 +60,27 @@ void factorio_solution_init(Factorio_solution_state* fsol, Sat_instance* inst, S
     fsol->sol = sol;
 }
 
+void base64_encode(Array_dyn<u8>* into, Array_t<u8> data) {
+    u8* table = (u8*)"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    u64 buf = 0;
+    s64 buf_size = 0;
+    for (u8 c: data) {
+        buf = buf << 8 | c;
+        buf_size += 8;
+        while (buf_size >= 6) {
+            array_push_back(into, table[buf >> (buf_size - 6) & 0x3f]);
+            buf_size -= 6;
+            buf &= (1ull << buf_size) - 1;
+        }
+    }
+    if (buf_size) {
+        array_push_back(into, table[(buf << (6 - buf_size)) & 0x3f]);
+        array_push_back(into, table[buf & 0x3f]);
+        if (buf_size == 2) array_push_back(into, table[buf & 0x3f]);
+    }
+}
+
 void factorio_solution_draw_image(Backend* backend, Factorio_solution_state* draw, Vec2 p, float* x_out, float* y_out) {
     GUI_TIMER(&backend->gui);
 
@@ -114,6 +135,82 @@ void factorio_solution_draw_image(Backend* backend, Factorio_solution_state* dra
         }
         array_printf(&str, "}\n");
         platform_clipboard_set(Platform_clipboard::CONTROL_C, str);
+    }
+    if (gui_shortcut(&backend->gui, Key::create_special(Key::C_SAVEAS, Key::MOD_CTRL | Key::MOD_SHIFT))) {
+        auto* sol = draw->sol;
+
+        Array_dyn<u8> str;
+        defer { array_free(&str); };
+
+        array_printf(&str, "{\"blueprint\":{\"entities\":[");
+        s64 count = 1;
+        for (s64 yi = 0; yi < ny; ++yi) {
+            for (s64 xi = 0; xi < nx; ++xi) {
+                Field f {xi, yi};
+
+                int d_inp = -1;
+                if (sol->istrue(f.dirs[0].inp)) d_inp = Dir::BEG + 0;
+                if (sol->istrue(f.dirs[1].inp)) d_inp = Dir::BEG + 1;
+                if (sol->istrue(f.dirs[2].inp)) d_inp = Dir::BEG + 2;
+                if (sol->istrue(f.dirs[3].inp)) d_inp = Dir::BEG + 3;
+
+                int d_out = -1;
+                if (sol->istrue(f.dirs[0].out)) d_out = Dir::BEG + 0;
+                if (sol->istrue(f.dirs[1].out)) d_out = Dir::BEG + 1;
+                if (sol->istrue(f.dirs[2].out)) d_out = Dir::BEG + 2;
+                if (sol->istrue(f.dirs[3].out)) d_out = Dir::BEG + 3;
+
+                if (draw->sol->istrue(f.belt)) {
+                    array_printf(
+                        &str, "{\"entity_number\":%lld,\"name\":\"transport-belt\","
+                        "\"position\":{\"x\":%lld.5,\"y\":-%lld.5},\"direction\":%d},",
+                        count, xi, yi, (d_out - Dir::BEG) * 2
+                    );
+                } else if (draw->sol->istrue(f.splitl)) {
+                    float xa = 0.5f * (1 + (d_out == Dir::TOP)  - (d_out == Dir::BOTTOM));
+                    float ya = 0.5f * (1 + (d_out == Dir::LEFT) - (d_out == Dir::RIGHT) );
+                    
+                    array_printf(
+                        &str, "{\"entity_number\":%lld,\"name\":\"splitter\","
+                        "\"position\":{\"x\":%.1f,\"y\":-%.1f},\"direction\":%d},",
+                        count, (float)xi + xa, (float)yi + ya, (d_out - Dir::BEG) * 2
+                    );
+                } else if (draw->sol->istrue(f.under)) {
+                    char const* type; int d;
+                    if (d_inp != -1) {
+                        type = "input";
+                        d = d_inp ^ 2;
+                    } else {
+                        type = "output";
+                        d = d_out;
+                    }
+
+                    array_printf(
+                        &str, "{\"entity_number\":%lld,\"name\":\"express-underground-belt\","
+                        "\"position\":{\"x\":%lld.5,\"y\":-%lld.5},\"direction\":%d,\"type\":\"%s\"},",
+                        count, xi, yi, (d - Dir::BEG) * 2, type
+                    );
+                } else {
+                    continue;
+                }
+                ++count;
+            }
+        }
+        if (count > 1) --str.size;
+        array_printf(&str, "]}}");
+
+        Array_t<u8> str_defl = array_create<u8>(compressBound(str.size));
+        defer { array_free(&str_defl); };
+
+        int code = compress2(str_defl.data, (long unsigned int*)&str_defl.size, str.data, str.size, 9);
+        if (code == Z_OK) {
+            Array_dyn<u8> str_b64;
+            defer { array_free(&str_b64); };
+
+            array_push_back(&str_b64, '0');
+            base64_encode(&str_b64, str_defl);
+            platform_clipboard_set(Platform_clipboard::CONTROL_C, str_b64);
+        }
     }
     
     float center_size = max(max(bar_size_min.x * n_lines, bar_size_min.y * n_linelen), 24.f);
@@ -903,7 +1000,7 @@ Factorio_params_result factorio_params_draw(Backend* context, Factorio_params_st
         }}
         array_printf(&context->temp_u8, "], yoff_input = [");
         {bool first = true;
-        for (s64 j: i_inst.params.yoff_output) {
+        for (s64 j: i_inst.params.yoff_input) {
             if (first) first = false;
             else       array_printf(&context->temp_u8, ", ");
             array_printf(&context->temp_u8, "%lld", j);
@@ -969,6 +1066,7 @@ struct Factorio_checksol_state {
     
     struct Row {
         s64 instance, solution;
+        bool expect_unsat = false;
         u8 result = 0;
     };
 
@@ -994,7 +1092,12 @@ void factorio_checksol_init(Factorio_checksol_state* check, Factorio_db* fdb) {
             if (array_equal(fsol.instance_name, fdb->instances[j].name)) break;
         }
         assert(j < fdb->instances.size);
+
         array_push_back(&check->rows, {j, i});
+        
+        if (fsol.name.size >= 3 and array_equal_str(array_subarray(fsol.name, 0, 3), "err")) {
+            check->rows.back().expect_unsat = true;
+        }
     }
 
     check->cur_row = 0;
@@ -1080,7 +1183,7 @@ void factorio_checksol_draw(Backend* backend, Factorio_checksol_state* check, Ve
     float w2 = 0.f;
     cell("result"_arr, &p, &w2);
     p.y += pad;
-    for (Row i: check->rows) cell(strings[i.result], &p, &w2, colors[i.result]);
+    for (Row i: check->rows) cell(strings[i.result], &p, &w2, colors[i.result ^ i.expect_unsat]);
     p.x += w2 + pad;
 
     p.x = p0.x;
