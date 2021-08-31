@@ -6,8 +6,8 @@ I want to automatically provide assistance to players of [Factorio](https://fact
 
 Brief high-level introduction:
 
-* `construct.cpp` Contains code to partition lists of recipes (both the spatial partition and sparsest cut variants), as well as a simplified layout generation. Right now, my focus is here.
-* `factorio.cpp`, `factorio_gui.cpp` A SAT instance to generate belt balancers, together with a GUI.
-* `sat.cpp` My C++ API to generate SAT instances.
+* `factorio_sat.cpp`, `factorio_gui.cpp` A SAT instance to generate belt balancers, together with a GUI. Right now, my focus is here.
+* `construct.cpp` Contains code to partition lists of recipes (both the spatial partition and sparsest cut variants), as well as a simplified layout generation.
+* `sat.cpp` My C++ API to generate SAT instances. Also, `sat_linux.cpp`, which does the necessary forking and output parsing to call a SAT solver on some instance.
 * other `*.cpp` files are my personal libraries, mostly re-used from previous projects
 * `stb_truetype.h` [Sean Barretts](https://github.com/nothings/stb/) excellent font rasterisation and loading library. I wrote my own font rasteriser (in `font.cpp`) but still use it as a convenient `ttf` parser.
