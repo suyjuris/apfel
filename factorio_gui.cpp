@@ -1195,114 +1195,80 @@ void factorio_checksol_draw(Backend* backend, Factorio_checksol_state* check, Ve
     using Row = Factorio_checksol_state::Row;
     
     float pad = 10.f;
-    auto font_sans = font_instance_get(&backend->fonts, backend->font_sans);
     Array_t<u8> strings[] = {"-"_arr, "pending"_arr, "SAT"_arr, "UNSAT"_arr};
     Color colors[] = {Palette::BLACK, Palette::BLACK, Palette::GREEN, Palette::RED};
 
     auto* fdb = check->fdb;
     
     p += pad;
-    Vec2 p0 = p;
 
-    auto cell = [backend](Array_t<u8> s, Vec2* p, float* out_w, Color c = Palette::BLACK) {
-        float x;
-        font_draw_string(&backend->fonts, backend->font_sans, s, *p, c, &x, &p->y);
-        if (out_w) *out_w = max(*out_w, x - p->x);
+    Table* table = gui_table(&backend->gui, "checksol,table"_arr, {}, p);
+    table->row_offset = 2;
+    table->padding = {pad, 0.f};
+
+    Array_t<u8> headers[] = {
+        "instance"_arr, "solution"_arr, "variables"_arr, "clauses"_arr,
+        "size"_arr, "gen"_arr, "dimacs"_arr, "solve"_arr, "result"_arr
     };
+    for (s64 i = 0; i < sizeof(headers) / sizeof(headers[0]); ++i) {
+        gui_table_cell_str(&backend->gui, table, -2, i, headers[i]);
+    }
 
-    static constexpr s64 n_columns = 9;
-    float w[n_columns] = {};
-    s64 col = 0;
-    
-    cell("instance"_arr, &p, &w[col]);
-    p.y += pad;
-    for (Row i: check->rows) cell(fdb->instances[i.instance].name, &p, &w[col]);
-    p.x += w[col] + pad; p.y = p0.y; ++col;
+    {gui_table_cell_set_size(table, -1, 0, {0.f, pad + 1.f});
+    Vec2 lp = gui_table_cell(table, -1, 0, Table::CENTER_V);
+    Vec2 lsize = gui_table_get_size(table);
+    lp.x -= pad / 2;
+    lp.y -= 0.5f;
+    lsize.x += pad;
+    shape_rectangle(&backend->shapes, lp, {lsize.x, 1.f}, Palette::BLACK);}
 
-    cell("solution"_arr, &p, &w[col]);
-    p.y += pad;
-    for (Row i: check->rows) cell(fdb->solutions[i.solution].name, &p, &w[col]);
-    p.x += w[col] + pad; p.y = p0.y; ++col;
 
-    cell("variables"_arr, &p, &w[col]);
-    p.y += pad;
-    for (Row i: check->rows) {
-        backend->temp_u8.size = 0;
+    s64 row = 0;
+    for (s64 row = 0; row < check->rows.size; ++row) {
+        Row i = check->rows[row];
+
+        gui_table_cell_str(&backend->gui, table, row, 0, fdb->instances[i.instance].name);
+        gui_table_cell_str(&backend->gui, table, row, 1, fdb->solutions[i.solution].name);
+
         if (i.n_variables != -1) {
+            backend->temp_u8.size = 0;
             array_printf(&backend->temp_u8, "%lld", i.n_variables);
+            gui_table_cell_str(&backend->gui, table, row, 2, backend->temp_u8, Table::RIGHT);
         }
-        cell(backend->temp_u8, &p, &w[col]);
-    }
-    p.x += w[col] + pad; p.y = p0.y; ++col;
-
-    cell("clauses"_arr, &p, &w[col]);
-    p.y += pad;
-    for (Row i: check->rows) {
-        backend->temp_u8.size = 0;
         if (i.n_clauses != -1) {
+            backend->temp_u8.size = 0;
             array_printf(&backend->temp_u8, "%lld", i.n_clauses);
+            gui_table_cell_str(&backend->gui, table, row, 3, backend->temp_u8, Table::RIGHT);
         }
-        cell(backend->temp_u8, &p, &w[col]);
-    }
-    p.x += w[col] + pad; p.y = p0.y; ++col;
-
-    cell("size"_arr, &p, &w[col]);
-    p.y += pad;
-    for (Row i: check->rows) {
-        backend->temp_u8.size = 0;
         if (i.size_bytes != -1) {
+            backend->temp_u8.size = 0;
             array_printf(&backend->temp_u8, "%.1f MiB", i.size_bytes / (float)(1 << 20ull));
+            gui_table_cell_str(&backend->gui, table, row, 4, backend->temp_u8, Table::RIGHT);
         }
-        cell(backend->temp_u8, &p, &w[col]);
-    }
-    p.x += w[col] + pad; p.y = p0.y; ++col;
-
-    cell("gen"_arr, &p, &w[col]);
-    p.y += pad;
-    for (Row i: check->rows) {
-        backend->temp_u8.size = 0;
         if (i.time_generate != -1) {
+            backend->temp_u8.size = 0;
             array_printf(&backend->temp_u8, "%.3fs", i.time_generate * 1e-9f);
+            gui_table_cell_str(&backend->gui, table, row, 5, backend->temp_u8, Table::RIGHT);
         }
-        cell(backend->temp_u8, &p, &w[col]);
-    }
-    p.x += w[col] + pad; p.y = p0.y; ++col;
-
-    cell("dimacs"_arr, &p, &w[col]);
-    p.y += pad;
-    for (Row i: check->rows) {
-        backend->temp_u8.size = 0;
         if (i.time_dimacs != -1) {
+            backend->temp_u8.size = 0;
             array_printf(&backend->temp_u8, "%.3fs", i.time_dimacs * 1e-9f);
+            gui_table_cell_str(&backend->gui, table, row, 6, backend->temp_u8, Table::RIGHT);
         }
-        cell(backend->temp_u8, &p, &w[col]);
-    }
-    p.x += w[col] + pad; p.y = p0.y; ++col;
-
-    cell("solve"_arr, &p, &w[col]);
-    p.y += pad;
-    for (Row i: check->rows) {
-        backend->temp_u8.size = 0;
         if (i.time_solve != -1) {
+            backend->temp_u8.size = 0;
             array_printf(&backend->temp_u8, "%.3fs", i.time_solve * 1e-9f);
+            gui_table_cell_str(&backend->gui, table, row, 7, backend->temp_u8, Table::RIGHT);
         }
-        cell(backend->temp_u8, &p, &w[col]);
+
+        Color c = colors[i.result ^ i.expect_unsat];
+        gui_table_cell_str(&backend->gui, table, row, 8, strings[i.result], 0, c);
     }
-    p.x += w[col] + pad; p.y = p0.y; ++col;
 
-    cell("result"_arr, &p, &w[col]);
-    p.y += pad;
-    for (Row i: check->rows) cell(strings[i.result], &p, &w[col], colors[i.result ^ i.expect_unsat]);
-    p.x += w[col] + pad; p.y = p0.y; ++col;
-    
-    p.x = p0.x;
+    if (table->require_redraw) {
+        backend->redraw_internal = true;
+    }
 
-    assert(col == n_columns);
-
-    float w_sum = 0.f;
-    for (float wi: w) w_sum += wi;
-
-    shape_rectangle(&backend->shapes, p0 + Vec2 {-pad/2, font_sans.newline + pad/2}, {w_sum + n_columns*pad, 1.f}, Palette::BLACK);
 }
 
 void factorio_checksol_update(Backend* backend, Factorio_checksol_state* check, Vec2 p, Vec2 size) {

@@ -84,6 +84,23 @@ struct Scrollbar {
     u32 flags = 0;
 };
 
+struct Table {
+    enum Anchor: u8 {
+        LEFT = 0, CENTER_H = 1, RIGHT  = 2,
+        TOP  = 0, CENTER_V = 4, BOTTOM = 8,
+        MASK_H = 3, MASK_V = 12
+    };
+    
+    u64 id;
+    Array_dyn<float> row_height {};
+    Array_dyn<float> col_width {};
+    Vec2 pos {};
+    bool require_redraw = false;
+    s64 row_offset = 0;
+    u32 flags = 0;
+    Vec2 padding {};
+};
+
 struct Gui {
     struct Pointable {
         u64 id;
@@ -129,6 +146,8 @@ struct Gui {
     Array_dyn<Scrollbar> scrollbars;
     float scrollbar_step = 50.f;
 
+    Array_dyn<Table> tables;
+    
     Shader buttonlike;
     float buttonlike_width_max = 40.f;
     float z_level_add = 0.f;
@@ -301,6 +320,8 @@ void gui_frame_init(Gui* gui) {
     }
     gui->scrollbars.size = i_out;}
 
+    // TODO Clean up the tables but remember to free the dynamic arrays within
+    
     gui->pointable_drag_diff = {};
     gui->pointable_scroll_diff = 0;
     gui->clear_once_flags = 0;
@@ -642,6 +663,98 @@ void gui_scrollbar_move_to_bottom(Gui* gui, Array_t<u8> name, Array_t<s64> name_
         float offset_max = scroll->total_height - area->size.y;
         smoothstep_add(&scroll->step, offset_max - scroll->step.value1, 0.f, offset_max);
     }
+}
+
+Table* gui_table_get(Gui* gui, Array_t<u8> name, Array_t<s64> name_args) {
+    u64 id = hash_u64(hash_str(name)) ^ hash_arr({(u64*)name_args.data, name_args.size});
+    for (auto& i: gui->tables) {
+        if (i.id == id) {
+            i.flags &= ~Gui::_DEAD;
+            return &i;
+        }
+    }
+    array_push_back(&gui->tables, Table {id});
+    return &gui->tables.back();
+}
+
+Table* gui_table(Gui* gui, Array_t<u8> name, Array_t<s64> name_args, Vec2 pos) {
+    Table* table = gui_table_get(gui, name, name_args);
+    table->pos = pos;
+    table->require_redraw = false;
+    return table;
+}
+
+Vec2 _gui_anchor(Vec2 p, Vec2 size, u8 anchor) {
+    p.x += size.x * ((float)(anchor & Table::MASK_H) / (float)Table::RIGHT);
+    p.y += size.y * ((float)(anchor & Table::MASK_V) / (float)Table::BOTTOM);
+    return p;
+}
+
+Vec2 gui_table_cell(Table* table, s64 row, s64 col, u8 anchor = Table::LEFT | Table::TOP) {
+    row += table->row_offset;
+    
+    Vec2 p = table->pos;
+    for (s64 i = 0; i < row and i < table->row_height.size; ++i) {
+        p.y += table->row_height[i];
+    }
+    for (s64 i = 0; i < col and i < table->col_width.size; ++i) {
+        p.x += table->col_width[i];
+    }
+    p += table->padding * Vec2 {(float)col, (float)row};
+    
+    float w = col < table->col_width .size ? table->col_width [col] : 0.f;
+    float h = row < table->row_height.size ? table->row_height[row] : 0.f;
+
+    return _gui_anchor(p, {w, h}, anchor);
+}
+
+Vec2 gui_table_get_size(Table* table) {
+    Vec2 size;
+    for (float i: table->col_width)  size.x += i;
+    for (float i: table->row_height) size.y += i;
+
+    size.x += max(table->col_width .size - 1, 0ll) * table->padding.x;
+    size.y += max(table->row_height.size - 1, 0ll) * table->padding.y;
+    
+    return size;
+}
+
+void gui_table_cell_set_size(Table* table, s64 row, s64 col, Vec2 size) {
+    row += table->row_offset;
+    
+    if (col >= table->col_width.size) {
+        array_resize(&table->col_width, col+1);
+    }
+    if (row >= table->row_height.size) {
+        array_resize(&table->row_height, row+1);
+    }
+    float* pw = &table->col_width[col];
+    if (*pw < size.x) {
+        *pw = size.x;
+        table->require_redraw = true;
+    }
+    float* ph = &table->row_height[row];
+    if (*ph < size.y) {
+        *ph = size.y;
+        table->require_redraw = true;
+    }
+}
+
+void gui_table_cell_str(
+    Gui* gui, Table* table, s64 row, s64 col, Array_t<u8> str,
+    u8 anchor = Table::LEFT | Table::TOP, Color color = Palette::BLACK
+) {
+    Vec2 p = gui_table_cell(table, row, col, anchor);
+    auto font_gui = font_instance_get(gui->fonts, gui->font_gui);
+
+    Vec2 size;
+    font_metrics_string_get(gui->fonts, gui->font_gui, str, &size.x);
+    size.y = font_gui.newline;
+
+    Vec2 pp = _gui_anchor(p, -size, anchor);
+    font_draw_string(gui->fonts, gui->font_gui, str, pp, color);
+    
+    gui_table_cell_set_size(table, row, col, size);
 }
 
 void gui_init(Gui* gui, Asset_store* assets, Shape_drawer* shapes, Font_data* fonts, s64 font) {
