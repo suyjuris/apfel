@@ -1302,7 +1302,7 @@ void factorio_checksol_draw(Backend* backend, Factorio_checksol_state* check, Ve
     float w_sum = 0.f;
     for (float wi: w) w_sum += wi;
 
-    shape_rectangle(&backend->shapes, p0 + Vec2 {0.f, font_sans.newline + pad/2}, {w_sum + 2*pad, 1.f}, Palette::BLACK);
+    shape_rectangle(&backend->shapes, p0 + Vec2 {-pad/2, font_sans.newline + pad/2}, {w_sum + n_columns*pad, 1.f}, Palette::BLACK);
 }
 
 void factorio_checksol_update(Backend* backend, Factorio_checksol_state* check, Vec2 p, Vec2 size) {
