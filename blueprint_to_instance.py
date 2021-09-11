@@ -14,9 +14,8 @@ blueprint = subprocess.run(['xclip', '-o', '-selection', 'clipboard'], stdout=su
 if blueprint[0] != '0':
     print('Error: Clipboard is not a valid blueprint!', file=sys.stdout)
     sys.exit(5)
-print(zlib.decompress(base64.b64decode(blueprint[1:])).decode('utf-8'))
 data = json.loads(zlib.decompress(base64.b64decode(blueprint[1:])).decode('utf-8'))
-print(json.dumps(data, indent="  "))
+
 
 class Field:
     EMPTY=0

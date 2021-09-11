@@ -394,11 +394,11 @@ solution 4to5_6 sol1 {
     .>>u.>.^u>S>.>S>
 }
 
-instance 4to5_test {
+instance 4to5_7 {
     nx = 8, ny = 8, scale_fac = 4, do_blocking = 0,
     yoff_output = [3, 4, 5, 6], yoff_input = [3, 4, 5, 6, 7]
 }
-solution 4to5_test sol1 {
+solution 4to5_7 sol1 [skip] {
     .v.<u<.>.>S><u.<
     .vS>>uu^u>S>S>.^
     .>S>S>.>.>.>S>.v
@@ -413,9 +413,25 @@ instance 4to5_8 {
     nx = 8, ny = 8, scale_fac = 4, do_blocking = 0,
     yoff_output = [2, 3, 4, 5], yoff_input = [2, 3, 4, 5, 6]
 }
-instance 4to5_9 {
+solution 4to5_8 sol1 [skip] {
+    .v.<.vu<.>.v<u.<
+    vu.^.v..u^.>S>.^
+    S>.^.>S>.>S>S>.>
+    S>S>>uS>S>S>u>S>
+    S>S>.v..S>.>S>S>
+    S>.v.>>u^uu>S>S>
+    uv.>.>S>.^.>.>S>
+    .>.>.>S>.>.^....
+}
+
+instance 4to5_9_unsat {
     nx = 8, ny = 7, scale_fac = 4, do_blocking = 0,
     yoff_output = [2, 3, 4, 5], yoff_input = [2, 3, 4, 5, 6]
+}
+
+instance 4to5_10_unsat {
+    nx = 8, ny = 7, scale_fac = 4, do_blocking = 0,
+    yoff_output = [1, 2, 3, 4], yoff_input = [1, 2, 3, 4, 5]
 }
 
 instance 4to6 {
